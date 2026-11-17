@@ -43,6 +43,8 @@ What the DSP suite covers
   must stay finite and below the limiter ceiling.
 * A thread that rewrites every parameter while audio runs, and a check that
   the latest edit always wins.
+* NaN, infinity and 1e30 on one channel only: the output stays finite and the
+  chain recovers to match a fresh instance.
 * The preset store and JSON reader, including hostile files (huge values,
   wrong types, deep nesting, garbage).
 

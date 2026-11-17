@@ -15,9 +15,11 @@ Principles
   does no work on the audio thread.
 
 The visual language (rounded dark cards, a single blue accent, spaced
-capitals for labels, the glowing particle orb) was designed for this
-project from a written feature description; no third-party artwork is used.
-The Inter typeface (SIL OFL) is embedded in the binary.
+capitals for labels, the glowing particle orb) and the arrangement of the
+five modules follow the published screenshots of the Windows vocal-chain
+plugin this project re-implements for Linux.  No artwork, fonts or code from
+that plugin are included: every control is drawn by this project's own
+code, and the Inter typeface (SIL OFL) is embedded in the binary.
 
 Layout
 ======

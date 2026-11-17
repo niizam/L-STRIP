@@ -22,6 +22,11 @@ as the missing channel.  A stereo plugin that links its channels (as any
 compressor, gate or reverb does) would be driven by that garbage when it is
 put on a mono microphone.  The mono variant never reads a second buffer.
 
+If the stereo build is used on a mono microphone by mistake it will not
+crash and will not output NaN: every input sample is checked and non-finite
+values are replaced by silence.  But finite garbage on the second channel can
+still sway the linked detectors, so use *L-STRIP Mono* for microphones.
+
 Adding the filter
 =================
 

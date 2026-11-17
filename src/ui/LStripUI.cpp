@@ -409,7 +409,7 @@ private:
         auto o = std::make_unique<PromptOverlay>("Save preset", user ? currentName_ : store_.nextName(), [this](const std::string& n) {
             float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = get(i);
             std::string err;
-            if (store_.save(n, v, &err)) { currentName_ = PresetStore::cleanName(n); setState("preset", currentName_.c_str()); captureBaseline(); toast("Saved \"" + currentName_ + "\""); closeOverlay(); }
+            if (store_.save(n, v, &err)) { currentName_ = PresetStore::cleanName(n); rememberPreset(); captureBaseline(); toast("Saved \"" + currentName_ + "\""); closeOverlay(); }
             else toast(err);
         });
         o->onClose = [this] { closeOverlay(); };
@@ -418,7 +418,7 @@ private:
     void openRename(const std::string& from) {
         auto o = std::make_unique<PromptOverlay>("Rename preset", from, [this, from](const std::string& n) {
             std::string err;
-            if (store_.rename(from, n, &err)) { if (currentName_ == from) { currentName_ = PresetStore::cleanName(n); setState("preset", currentName_.c_str()); } toast("Renamed"); openPresets(); }
+            if (store_.rename(from, n, &err)) { if (currentName_ == from) { currentName_ = PresetStore::cleanName(n); rememberPreset(); } toast("Renamed"); openPresets(); }
             else toast(err);
         });
         o->onClose = [this] { openPresets(); };
@@ -436,7 +436,7 @@ private:
         } else if (const UserPreset* p = store_.find(name)) std::copy(p->values, p->values + kNumInputParams, v);
         else { toast("Preset not found"); return; }
         applyValues(v);
-        currentName_ = name; setState("preset", name.c_str()); captureBaseline();
+        currentName_ = name; { currentName_ = name; rememberPreset(); } captureBaseline();
     }
     // Match the live parameter values against the known presets (host loads program 0 itself).
     void identifyCurrent() {
@@ -449,6 +449,9 @@ private:
         if (!presetName.empty()) currentName_ = presetName; else currentName_ = "Untitled";
         captureBaseline();
     }
+    // DPF's state map is also read by the host thread (effGetChunk); the worker thread must not write it.
+    // The name is recovered from the parameter values when the editor reopens (identifyCurrent()).
+    void rememberPreset() { if (!driver_.selfDriven()) setState("preset", currentName_.c_str()); }
     void captureBaseline() { for (uint32_t i = 0; i < kNumInputParams; ++i) baseline_[i] = get(i); }
     bool isModified() const { for (uint32_t i = 0; i < kNumInputParams; ++i) if (std::fabs(baseline_[i] - get(i)) > 1e-4f) return true; return false; }
     std::string currentTag() const {

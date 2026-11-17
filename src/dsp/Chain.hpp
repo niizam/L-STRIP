@@ -176,7 +176,18 @@ private:
         }
     }
 
+    // Hosts may hand over garbage (OBS gives plugins an uninitialised buffer for a missing channel).
+    // One NaN would poison every stereo-linked detector and the reverb/delay lines until reset, and
+    // clampf() would pass it straight through, so non-finite and absurd samples are cleaned up first.
+    static inline void sanitize(float* x, int n) {
+        for (int i = 0; i < n; ++i) {
+            const float v = x[i];
+            x[i] = (v == v && v - v == 0.f) ? clampf(v, -16.f, 16.f) : 0.f;   // v==v: not NaN, v-v==0: not Inf
+        }
+    }
+
     void processChunk(float* l, float* r, int n) {
+        sanitize(l, n); sanitize(r, n);
         // raw dry copy for Intensity / bypass
         std::copy(l, l + n, dl_); std::copy(r, r + n, dr_);
 
@@ -241,6 +252,7 @@ private:
         for (int i = 0; i < n; ++i) {
             const float by = bypass_.next();           // master off: crossfade to the raw input
             l[i] += (dl_[i] - l[i]) * by; r[i] += (dr_[i] - r[i]) * by;
+            if (!(l[i] == l[i]) || !(r[i] == r[i])) { l[i] = r[i] = 0.f; }   // never hand NaN to the host
             const float pk = std::max(std::fabs(l[i]), std::fabs(r[i]));
             outPk = std::max(outPk, pk); acc += pk * pk;
         }

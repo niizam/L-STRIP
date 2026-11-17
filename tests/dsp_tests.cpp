@@ -317,6 +317,29 @@ static void testConcurrentParams() {
     CHECK(hi > lo + 8.f && std::fabs(lo2 - lo) < 0.5f, "each edit takes effect (air -6/+6/-6 -> %.1f / %.1f / %.1f dB)", lo, hi, lo2);
 }
 
+static void testGarbageInput() {
+    std::printf("garbage on one channel (uninitialised host buffer)\n");
+    for (int mode = 0; mode < 3; ++mode) {
+        Chain c; c.prepare(SR);
+        const float bad[3] = {NAN, INFINITY, 1e30f};
+        std::vector<float> l = voice(200, 4096, 0.3f), r(4096, 0.f);
+        for (size_t i = 100; i < 300; ++i) r[i] = bad[mode];   // garbage in R only
+        c.process(l.data(), r.data(), 4096);
+        bool fin = true; for (size_t i = 0; i < 4096; ++i) fin &= std::isfinite(l[i]) && std::isfinite(r[i]);
+        CHECK(fin, "output stays finite after %s on the right channel", mode == 0 ? "NaN" : (mode == 1 ? "Inf" : "1e30"));
+        // and the chain must recover: later clean blocks behave like a fresh chain
+        Chain fresh; fresh.prepare(SR);
+        std::vector<float> a = voice(200, 16384, 0.3f), b = a, fa = a, fb = a;
+        for (int k = 0; k < 3; ++k) {
+            std::vector<float> g = voice(200, 4096, 0.3f), z(4096, 0.f); z[50] = bad[mode];
+            c.process(g.data(), z.data(), 4096);
+        }
+        c.process(a.data(), b.data(), 16384); fresh.process(fa.data(), fb.data(), 16384);
+        double e = 0; for (size_t i = 8000; i < 16384; ++i) e = std::max(e, (double)std::fabs(a[i] - fa[i]));
+        CHECK(e < 5e-2, "chain recovers after garbage (%s): max deviation %.4f", mode == 0 ? "NaN" : (mode == 1 ? "Inf" : "1e30"), e);
+    }
+}
+
 static void testFuzz() {
     std::printf("stability fuzz\n");
     Chain c; c.prepare(SR);
@@ -379,7 +402,7 @@ static void testPresetStore() {
 int main() {
     testPresetStore();
     testParamTable(); testPassthrough(); testBlockSizes(); testGate(); testCompressor(); testDeEsser();
-    testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testConcurrentParams(); testFuzz();
+    testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testConcurrentParams(); testGarbageInput(); testFuzz();
     std::printf("\n%d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

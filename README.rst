@@ -32,6 +32,14 @@ Plug-in*, choose **L-STRIP Mono**, press *Open Plug-in Interface*, and pick
 a preset.  Use the stereo **L-STRIP** for stereo sources.  See
 ``Documentation/obs.rst`` for the reasons and for Wayland notes.
 
+Not included yet
+----------------
+
+The reference product also has a separate simplified variant ("ONE": one
+big AMOUNT knob plus Input, Gate, De-ess, Space, Delay and Output faders).
+L-STRIP does not have it yet; the full chain's *Intensity* orb is the
+closest equivalent.
+
 Documentation
 -------------
 

@@ -24,6 +24,13 @@ JUCE was rejected because it is GPLv3 or commercial, which does not mix with
 the MIT licence of this project.  DPF is ISC licensed and ships clean-room
 VST2 and VST3 headers, so no Steinberg SDK is involved.
 
+Scope
+=====
+
+Not included yet: the simplified "ONE" variant of the reference product (a
+single AMOUNT knob with a few faders).  It would be a second, smaller editor
+over the same parameter table and DSP chain, so nothing here prevents it.
+
 Source layout
 =============
 

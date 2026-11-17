@@ -7,6 +7,16 @@ callback sets flush-to-zero).  The tests run at 48 kHz; every time constant
 is derived from the sample rate.  Unless stated, processing is stereo-linked:
 detectors look at the louder of the two channels.
 
+Input protection
+================
+
+Before anything else every input sample is checked: NaN and infinity become
+zero and values are limited to +/- 16 (+24 dBFS).  Hosts occasionally hand
+over uninitialised memory (OBS does for a missing channel); one NaN would
+otherwise poison every stereo-linked detector and the reverb and delay lines
+until the plugin is reset.  The output is checked once more before it is
+returned to the host.
+
 Stages, in signal order
 =======================
 
