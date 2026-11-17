@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Builds on ubuntu-latest when a version tag (v*) is pushed and publishes the
+# binaries to the GitHub Releases page.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libcairo2-dev libfreetype-dev libasound2-dev libpulse-dev \
+            libjack-jackd2-dev python3-docutils
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Package
+        run: tools/package-release.sh "${GITHUB_REF_NAME#v}" build dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "L-STRIP ${GITHUB_REF_NAME}" \
+            --notes "Linux x86_64 build made on ubuntu-latest: VST2, VST3, LV2 and CLAP plugins (stereo and mono) and the standalone JACK application. Unpack the tarball and run tools/install-user.sh. See Documentation/obs.rst for OBS Studio (use L-STRIP Mono for microphones)."

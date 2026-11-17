@@ -10,6 +10,7 @@ uninstall=0
 if [ "${1:-}" = "--uninstall" ]; then uninstall=1; shift; fi
 here=$(cd "$(dirname "$0")/.." && pwd)
 build=${1:-$here/build}
+[ -d "$build/bin" ] || build=$here      # inside an unpacked release tarball
 bin=$build/bin
 
 vst2=${HOME}/.vst

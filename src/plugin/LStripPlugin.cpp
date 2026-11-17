@@ -40,7 +40,7 @@ protected:
     const char* getMaker() const override { return "L-STRIP contributors"; }
     const char* getHomePage() const override { return "https://github.com/niizam/L-STRIP"; }
     const char* getLicense() const override { return "MIT"; }
-    uint32_t getVersion() const override { return d_version(0, 1, 0); }
+    uint32_t getVersion() const override { return d_version(1, 0, 0); }
     int64_t getUniqueId() const override { return d_cconst('L', 'S', 't', 'p'); }
 
     // ------------------------------------------------------------- parameters
