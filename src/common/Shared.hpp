@@ -30,7 +30,9 @@ struct SharedState {
 // regular parameterChanged() updates.  No RTTI is involved, so this links everywhere.
 class SharedRegistry {
 public:
-    static SharedRegistry& instance() { static SharedRegistry r; return r; }
+    // Intentionally leaked: plugin objects may be destroyed during process teardown
+    // (after function-local statics), and they unregister here.
+    static SharedRegistry& instance() { static SharedRegistry* r = new SharedRegistry(); return *r; }
     void add(const void* key, const std::shared_ptr<SharedState>& s) {
         std::lock_guard<std::mutex> lk(m_);
         map_[key] = s;

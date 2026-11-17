@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "DistrhoPlugin.hpp"
+#include "DistrhoPluginUtils.hpp"
 #include <cstdio>
 #include <cstdlib>
 
@@ -16,6 +17,10 @@ public:
     LStripPlugin()
         : Plugin(lstrip::kParamCount, lstrip::kNumFactoryPresets, kStateCount)
     {
+        // CLAP hosts must restart the plugin to apply a latency change, and DPF's CLAP wrapper requests that
+        // restart whenever the value changes while active.  Toggling Tune would glitch the whole session, so in
+        // CLAP the Tune latency is not reported (the dry path stays internally aligned).  See Documentation/dsp.rst.
+        reportsLatency_ = std::strcmp(getPluginFormatName(), "CLAP") != 0;
         chain_.prepare(getSampleRate());
         shared_ = std::make_shared<lstrip::SharedState>();
         lstrip::SharedRegistry::instance().add(static_cast<Plugin*>(this), shared_);
@@ -44,7 +49,7 @@ protected:
         p.symbol = d.symbol;
         p.ranges.min = d.min; p.ranges.max = d.max; p.ranges.def = d.def;
         p.hints = 0;
-        if (d.flags & lstrip::fOutput) p.hints |= kParameterIsOutput;
+        if (d.flags & lstrip::fOutput) p.hints |= kParameterIsOutput | kParameterIsHidden; // meters: not for hosts' parameter lists
         else p.hints |= kParameterIsAutomatable;
         if (d.flags & lstrip::fLog) p.hints |= kParameterIsLogarithmic;
         switch (d.kind) {
@@ -119,10 +124,11 @@ protected:
 
 private:
     void reportLatency() {
-        const int lat = chain_.latency();
+        const int lat = reportsLatency_ ? chain_.latency() : 0;
         if (lat != reportedLatency_) { reportedLatency_ = lat; setLatency(static_cast<uint32_t>(lat)); }
     }
     int reportedLatency_ = -1;
+    bool reportsLatency_ = true;
     std::shared_ptr<lstrip::SharedState> shared_;
     lstrip::dsp::Chain chain_;
     float values_[lstrip::kParamCount];
