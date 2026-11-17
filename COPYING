@@ -4,3 +4,6 @@ L-STRIP is provided under:
 
 All contributions to the L-STRIP are subject to this COPYING file.
 
+
+Third-party components bundled with or linked into the binaries, and their
+licences, are listed in THIRD-PARTY.rst.

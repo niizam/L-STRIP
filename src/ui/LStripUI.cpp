@@ -96,9 +96,10 @@ public:
 
 protected:
     // ----------------------------------------------------------- DPF callbacks
-    void uiIdle() override { driver_.noteHostIdle(); tick(); }
+    void uiIdle() override { driver_.noteHostIdle(); std::lock_guard<std::mutex> lk(driver_.mutex()); tick(); }
 
-    void parameterChanged(uint32_t index, float value) override { UiBase::parameterChanged(index, value); }
+    void parameterChanged(uint32_t index, float value) override { std::lock_guard<std::mutex> lk(driver_.mutex()); UiBase::parameterChanged(index, value); }
+    void stateChanged(const char* key, const char* value) override { std::lock_guard<std::mutex> lk(driver_.mutex()); UiBase::stateChanged(key, value); }
 
     void onPresetStateFromHost(const std::string& n) override { if (!n.empty()) { currentName_ = n; identified_ = false; tickCount_ = 0; } }
 
@@ -108,15 +109,6 @@ protected:
             std::string name, err;
             if (store_.importFile(filename, &name, &err)) { toast("Imported \"" + name + "\""); if (presets_) presets_->rebuild(); }
             else toast("Import failed: " + err);
-        } else if (browse_ == Browse::Export) {
-            std::string path = filename;
-            if (path.size() < 12 || path.compare(path.size() - 12, 12, ".lstrip.json") != 0) path += ".lstrip.json";
-            float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = get(i);
-            std::string out; const std::string dir = path.substr(0, path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/'));
-            std::string base = path.substr(path.find_last_of('/') == std::string::npos ? 0 : path.find_last_of('/') + 1);
-            base = base.substr(0, base.size() - 12);
-            if (store_.exportTo(base.empty() ? currentName_ : base, v, dir.empty() ? "." : dir, &out)) toast("Exported to " + out);
-            else toast("Export failed");
         }
         browse_ = Browse::None;
     }
@@ -210,7 +202,7 @@ protected:
     }
 
 private:
-    enum class Browse { None, Import, Export };
+    enum class Browse { None, Import };
 
     // ------------------------------------------------------------- building
     template <class T, class... A> T* add(A&&... a) { auto* p = new T(std::forward<A>(a)...); main_.emplace_back(p); return p; }
@@ -396,8 +388,18 @@ private:
         o->onClose = [this] { closeOverlay(); };
         o->onLoad = [this](const std::string& n, bool factory) { loadPreset(n, factory); };
         o->onSave = [this] { openSave(); };
-        o->onImport = [this] { browse_ = Browse::Import; FileBrowserOptions fo; fo.title = "Import L-STRIP preset"; fo.startDir = store_.dataDir().c_str(); openFileBrowser(fo); };
-        o->onExport = [this] { browse_ = Browse::Export; FileBrowserOptions fo; fo.saving = true; fo.title = "Export preset"; exportName_ = PresetStore::fileNameFor(currentName_); fo.defaultName = exportName_.c_str(); openFileBrowser(fo); };
+        o->onImport = [this] { browse_ = Browse::Import; FileBrowserOptions fo; fo.title = "Import L-STRIP preset"; fo.startDir = store_.dataDir().c_str(); const bool ok = openFileBrowser(fo); if (!ok) toast("Could not open the file dialog"); if (std::getenv("LSTRIP_DEBUG")) std::fprintf(stderr, "[L-STRIP ui] openFileBrowser(import) -> %d\n", ok); };
+        o->onExport = [this] {
+            // Export never asks for a path (the X11 save dialog does not exist): it writes into
+            // <Documents>/L-STRIP and shows where.
+            float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = get(i);
+            std::string out;
+            if (store_.exportTo(currentName_, v, PresetStore::exportDir(), &out)) {
+                const char* home = std::getenv("HOME");
+                if (home && *home && out.compare(0, std::strlen(home), home) == 0) out = "~" + out.substr(std::strlen(home));
+                toast("Exported to " + out);
+            } else toast("Could not write to " + PresetStore::exportDir());
+        };
         o->onRename = [this](const std::string& n) { openRename(n); };
         o->onDelete = [this](const std::string& n) { if (store_.remove(n)) { toast("Deleted \"" + n + "\""); if (n == currentName_) { currentName_ = "Init"; } if (presets_) presets_->rebuild(); } };
         setOverlay(std::move(o), self);
@@ -514,7 +516,7 @@ private:
     PresetsOverlay* presets_ = nullptr;
     PillButton* themeBtn_ = nullptr;
     PitchTrace trace_;
-    std::string currentName_ = "Podcast Clean", exportName_;
+    std::string currentName_ = "Podcast Clean";
     float baseline_[kNumInputParams];
     Browse browse_ = Browse::None;
     float ox_ = 0, oy_ = 0, scale_ = 1;

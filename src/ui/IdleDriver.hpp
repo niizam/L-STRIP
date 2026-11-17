@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 class IdleDriver {
@@ -47,8 +48,12 @@ public:
                 if (!running_.load()) break;
                 if (hostIdles_.load() > 2) break;                         // host is driving us: retire
                 const double age = std::chrono::duration<double>(Clock::now() - t0).count();
+                // DPF idles the editor once from the host thread while it is being created; wait for that
+                // (plus a margin) so the worker never overlaps the create-time host-thread calls.
+                if (hostIdles_.load() < 1 || age < 0.08) continue;
                 if (!immediate && age < kGraceSec) continue;              // still waiting to see what the host does
                 if (!immediate && hostIdles_.load() > 1) continue;        // looks like it idles after all
+                std::lock_guard<std::mutex> lk(m_);
                 pump_();
                 selfDriven_.store(true);
             }
@@ -62,10 +67,13 @@ public:
     // Call from UI::uiIdle() (the host-driven path).
     void noteHostIdle() { hostIdles_.fetch_add(1); }
     bool selfDriven() const { return selfDriven_.load(); }
+    // Host-thread entry points (state / parameter callbacks) take this so they never overlap a pump.
+    std::mutex& mutex() { return m_; }
 
 private:
     std::function<void()> pump_;
     std::thread thread_;
+    std::mutex m_;
     std::atomic<bool> running_{false}, selfDriven_{false};
     std::atomic<int> hostIdles_{0};
 };

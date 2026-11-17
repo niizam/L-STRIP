@@ -22,7 +22,16 @@
 #include "Space.hpp"
 #include "../common/Params.hpp"
 
+#include <atomic>
+
 namespace lstrip::dsp {
+
+// Parameter cell written by GUI/host threads and read by the audio thread.
+struct ParamCell {
+    std::atomic<float> v{0.f};
+    operator float() const { return v.load(std::memory_order_relaxed); }
+    ParamCell& operator=(float x) { v.store(x, std::memory_order_relaxed); return *this; }
+};
 
 class Chain {
 public:
@@ -54,10 +63,10 @@ public:
         v = clampf(v, d.min, d.max);
         if (p_[id] == v) return;
         p_[id] = v;
-        markDirty(id);
+        markDirty(id);   // release: the audio thread's exchange() below sees the new value
     }
     float param(uint32_t id) const { return p_[id]; }
-    void setTempo(double bpm) { if (bpm > 1.0 && bpm != bpm_) { bpm_ = bpm; dirty_ |= kDirSpace; } }
+    void setTempo(double bpm) { if (bpm > 1.0 && bpm != bpm_) { bpm_ = bpm; dirty_.fetch_or(kDirSpace, std::memory_order_release); } }
 
     // Latency in samples currently introduced by the chain.
     int latency() const { return p_[kTuneOn] > 0.5f && p_[kMasterOn] > 0.5f ? tune_.latencySamples() : 0; }
@@ -84,43 +93,47 @@ public:
 private:
     enum : uint32_t { kDirComp = 1, kDirDeess = 2, kDirEq = 4, kDirMb = 8, kDirSpace = 16,
                       kDirTune = 32, kDirGate = 64, kDirSat = 128, kDirAll = 0xFFFF };
-    void dirtyAll() { dirty_ = kDirAll; }
+    void dirtyAll() { dirty_.store(kDirAll, std::memory_order_release); }
+    void mark(uint32_t bit) { dirty_.fetch_or(bit, std::memory_order_release); }
     void markDirty(uint32_t id) {
         switch (id) {
-        case kGateThresh: dirty_ |= kDirGate; break;
-        case kOutSat: dirty_ |= kDirSat; break;
+        case kGateThresh: mark(kDirGate); break;
+        case kOutSat: mark(kDirSat); break;
         case kDynStyle: case kCompThresh: case kCompMakeup: case kCompTone: case kCompMix: case kCompMode:
-            dirty_ |= kDirComp; break;
-        case kDeessFreq: case kDeessAmount: case kDeessRange: case kDeessListen: dirty_ |= kDirDeess; break;
+            mark(kDirComp); break;
+        case kDeessFreq: case kDeessAmount: case kDeessRange: case kDeessListen: mark(kDirDeess); break;
         case kSpaceType: case kReverbMix: case kDelayMix: case kReverbDuck: case kDelayDuck:
-        case kDelayTime: case kChorusRate: case kChorusMix: case kChorusVoices: dirty_ |= kDirSpace; break;
+        case kDelayTime: case kChorusRate: case kChorusMix: case kChorusVoices: mark(kDirSpace); break;
         case kMbStyle: case kMbDepth: case kMbTime: case kMbUpward: case kMbDown: case kMbOutput:
-        case kMbLow: case kMbMid: case kMbHigh: dirty_ |= kDirMb; break;
-        case kEqStyle: case kEqLow: case kEqMid: case kEqHigh: case kEqAir: case kEqLowCut: dirty_ |= kDirEq; break;
+        case kMbLow: case kMbMid: case kMbHigh: mark(kDirMb); break;
+        case kEqStyle: case kEqLow: case kEqMid: case kEqHigh: case kEqAir: case kEqLowCut: mark(kDirEq); break;
         default:
-            if ((id >= kTuneKey && id <= kTuneMix)) dirty_ |= kDirTune;
+            if ((id >= kTuneKey && id <= kTuneMix)) mark(kDirTune);
             break;
         }
     }
     void applyDirty() {
-        if (dirty_ & kDirGate) gate_.setThreshold(p_[kGateThresh]);
-        if (dirty_ & kDirSat) sat_.set(p_[kOutSat] * 0.01f);
-        if (dirty_ & kDirComp) {
+        // exchange(0): a bit set by another thread after this point is kept for the next block, never lost.
+        const uint32_t dirty = dirty_.exchange(0, std::memory_order_acquire);
+        if (!dirty) return;
+        if (dirty & kDirGate) gate_.setThreshold(p_[kGateThresh]);
+        if (dirty & kDirSat) sat_.set(p_[kOutSat] * 0.01f);
+        if (dirty & kDirComp) {
             CompSettings s;
             s.thresh = p_[kCompThresh]; s.makeup = p_[kCompMakeup]; s.tone = p_[kCompTone];
             s.mix = p_[kCompMix] * 0.01f; s.mode = static_cast<int>(p_[kCompMode] + 0.5f);
             s.style = static_cast<int>(p_[kDynStyle] + 0.5f);
             comp_.set(s);
         }
-        if (dirty_ & kDirDeess)
+        if (dirty & kDirDeess)
             deess_.set(p_[kDeessFreq], p_[kDeessAmount] * 0.01f, p_[kDeessRange], p_[kDeessListen] > 0.5f);
-        if (dirty_ & kDirEq) {
+        if (dirty & kDirEq) {
             EqSettings s;
             s.low = p_[kEqLow]; s.mid = p_[kEqMid]; s.high = p_[kEqHigh]; s.air = p_[kEqAir];
             s.lowCut = p_[kEqLowCut]; s.style = static_cast<int>(p_[kEqStyle] + 0.5f);
             eq_.set(s);
         }
-        if (dirty_ & kDirMb) {
+        if (dirty & kDirMb) {
             MbSettings s;
             s.depth = p_[kMbDepth] * 0.01f; s.time = p_[kMbTime] * 0.01f; s.upward = p_[kMbUpward] * 0.01f;
             s.down = p_[kMbDown] * 0.01f; s.output = p_[kMbOutput];
@@ -128,7 +141,7 @@ private:
             s.style = static_cast<int>(p_[kMbStyle] + 0.5f);
             mb_.set(s);
         }
-        if (dirty_ & kDirSpace) {
+        if (dirty & kDirSpace) {
             SpaceSettings s;
             s.type = static_cast<int>(p_[kSpaceType] + 0.5f);
             s.reverbMix = p_[kReverbMix] * 0.01f; s.delayMix = p_[kDelayMix] * 0.01f;
@@ -138,7 +151,7 @@ private:
             s.voices = static_cast<int>(p_[kChorusVoices] + 0.5f); s.bpm = bpm_;
             space_.set(s);
         }
-        if (dirty_ & kDirTune) {
+        if (dirty & kDirTune) {
             float flags[12];
             for (int i = 0; i < 12; ++i) flags[i] = p_[kTuneNote0 + i];
             TuneSettings s;
@@ -146,7 +159,6 @@ private:
             s.speedMs = p_[kTuneSpeed]; s.humanize = p_[kTuneHumanize] * 0.01f; s.mix = p_[kTuneMix] * 0.01f;
             tune_.set(s);
         }
-        dirty_ = 0;
     }
 
     // Run `fn` on (l, r) with a crossfaded bypass controlled by `on`.
@@ -240,9 +252,9 @@ private:
     }
 
     double sr_ = 48000, bpm_ = 120.0;
-    float p_[kParamCount];
+    ParamCell p_[kParamCount];
     float out_[kParamCount - kNumInputParams] = {};
-    uint32_t dirty_ = kDirAll;
+    std::atomic<uint32_t> dirty_{kDirAll};
 
     Gate gate_; PitchCorrector tune_; Compressor comp_; DeEsser deess_; Equalizer eq_;
     Multiband mb_; Space space_; Saturator sat_; Limiter lim_;

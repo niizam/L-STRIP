@@ -15,7 +15,7 @@ UiBase::UiBase() : UI(static_cast<uint>(kW), static_cast<uint>(kH)) {
     font_[Bold] = createFontFromMemory("inter-semibold", bold.data, bold.size, false);
     setGeometryConstraints(static_cast<uint>(kW * 0.6f), static_cast<uint>(kH * 0.6f), true);
     // In-process formats: read meters straight from the DSP (see common/Shared.hpp).
-    shared = SharedRegistry::instance().find(getPluginInstancePointer());
+    bindShared(SharedRegistry::instance().find(getPluginInstancePointer()));
     if (std::getenv("LSTRIP_DEBUG")) std::fprintf(stderr, "[L-STRIP ui] direct DSP access: %s\n", shared ? "yes" : "no (using host parameter updates)");
 }
 
@@ -97,16 +97,23 @@ float UiBase::txtWidth(const std::string& s, float size, Font f, float spacing) 
     return r.getWidth();
 }
 
+void UiBase::bindShared(std::shared_ptr<SharedState> s) {
+    shared = std::move(s);
+    if (!shared) return;
+    for (uint32_t i = 0; i < kParamCount; ++i) { lastShared_[i] = shared->get(i); val_[i] = lastShared_[i]; }
+}
+
 void UiBase::pollShared() {
-    static const bool dbg0 = std::getenv("LSTRIP_DEBUG") != nullptr;
-    if (dbg0) { static double lastNo = 0; const double t = now(); if (!shared && t - lastNo > 3.0) { lastNo = t; std::fprintf(stderr, "[L-STRIP ui] no shared state bound yet\n"); } }
     if (!shared) return;
     static const bool dbg = std::getenv("LSTRIP_DEBUG") != nullptr;
     if (dbg) { static double last = 0; const double t = now(); if (t - last > 2.0) { last = t; std::fprintf(stderr, "[L-STRIP ui] meter_in %.1f dB  meter_out %.1f dB\n", shared->get(kMeterIn), shared->get(kMeterOut)); } }
     for (uint32_t i = 0; i < kParamCount; ++i) {
         const float v = shared->get(i);
         if (i >= kNumInputParams) { val_[i] = v; continue; }
-        if (active == nullptr && v != val_[i]) val_[i] = v; // host automation / program change
+        // In VST3/CLAP an editor edit reaches `shared` only after the host forwards it.  Adopting a
+        // value only when *shared* changed keeps those local edits from being reverted meanwhile,
+        // while host automation and program changes (which change `shared`) still flow in.
+        if (v != lastShared_[i]) { lastShared_[i] = v; if (active == nullptr) val_[i] = v; }
     }
 }
 

@@ -86,6 +86,7 @@ public:
     // Data shared with the DSP.
     std::shared_ptr<SharedState> shared;
     void pollShared();
+    void bindShared(std::shared_ptr<SharedState> s);
 
     // DPF callbacks that are common to all subclasses.
     void parameterChanged(uint32_t index, float value) override { if (index < kParamCount) val_[index] = value; }
@@ -97,6 +98,7 @@ public:
 
 protected:
     float val_[kParamCount];
+    float lastShared_[kParamCount];   // last value seen in `shared`; edits are only overwritten when it changes
     bool dark_ = true;
     FontId font_[2] = {-1, -1};
     std::string toast_;

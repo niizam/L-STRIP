@@ -2,7 +2,9 @@
 // Headless DSP tests for L-STRIP.  No framework needed; returns non-zero on failure.
 #include "../src/dsp/Chain.hpp"
 #include "../src/common/PresetStore.hpp"
+#include <atomic>
 #include <filesystem>
+#include <thread>
 
 #include <cstdio>
 #include <cstdlib>
@@ -278,6 +280,43 @@ static void testPitch() {
     }
 }
 
+static void testConcurrentParams() {
+    std::printf("concurrent parameter writes (GUI thread vs audio thread)\n");
+    Chain c; c.prepare(SR);
+    std::atomic<bool> stop{false};
+    std::thread gui([&] {
+        std::mt19937 g(5); std::uniform_real_distribution<float> u(0, 1);
+        while (!stop.load()) {
+            for (uint32_t i = 0; i < kNumInputParams; ++i) {   // like a preset apply: every parameter, back to back
+                if (i == kMasterOn) continue;
+                c.setParam(i, kParams[i].min + u(g) * (kParams[i].max - kParams[i].min));
+            }
+        }
+    });
+    auto src = voice(200, 2048, 0.3f);
+    bool fin = true;
+    for (int it = 0; it < 400; ++it) {
+        std::vector<float> l = src, r = src;
+        c.process(l.data(), r.data(), static_cast<int>(l.size()));
+        for (float v : l) fin &= std::isfinite(v);
+    }
+    stop.store(true); gui.join();
+    CHECK(fin, "audio stays finite while parameters change from another thread");
+    // After the writer stops, the *latest* edit must be what the DSP uses: no update is lost.
+    setAllOff(c); c.setParam(kEqOn, 1);
+    for (uint32_t id : {kEqLow, kEqMid, kEqHigh}) c.setParam(id, 0);
+    c.setParam(kEqLowCut, 20); c.setParam(kEqStyle, 0);   // the writer randomised the style too
+    auto sine = [](size_t n) { std::vector<float> x(n); for (size_t i = 0; i < n; ++i) x[i] = 0.2f * std::sin(2 * kPi * 12000.0 * i / SR); return x; };
+    auto level = [&](float airDb) {
+        c.setParam(kEqAir, airDb);                        // edit made right before the block is processed
+        std::vector<float> l = sine(8192), r = l; c.process(l.data(), r.data(), 8192);
+        return rmsDb(l, 4096, 8192);
+    };
+    level(0.f);
+    const float lo = level(-6.f), hi = level(6.f), lo2 = level(-6.f);
+    CHECK(hi > lo + 8.f && std::fabs(lo2 - lo) < 0.5f, "each edit takes effect (air -6/+6/-6 -> %.1f / %.1f / %.1f dB)", lo, hi, lo2);
+}
+
 static void testFuzz() {
     std::printf("stability fuzz\n");
     Chain c; c.prepare(SR);
@@ -329,13 +368,18 @@ static void testPresetStore() {
     CHECK(st3.starred("Podcast Clean") && !st3.dark(), "config roundtrip");
     Json j; CHECK(Json::parse("{\"a\":[1,2,{\"b\":\"\\u00e9\\n\"}],\"c\":true}", j) && j.get("a")->a.size() == 3 && j.get("c")->b, "json parse");
     CHECK(!Json::parse("[1,2", j) && !Json::parse("{\"a\":}", j) && !Json::parse("nan", j), "json rejects garbage");
+    // export folder follows xdg user-dirs
+    { fs::create_directories(base + "/cfg"); std::ofstream f(base + "/cfg/user-dirs.dirs"); f << "XDG_DOCUMENTS_DIR=\"$HOME/Docs\"\n"; }
+    setenv("XDG_CONFIG_HOME", (std::filesystem::current_path() / (base + "/cfg")).c_str(), 1); setenv("HOME", "/home/tester", 1);
+    CHECK(PresetStore::exportDir() == "/home/tester/Docs/L-STRIP", "export dir: %s", PresetStore::exportDir().c_str());
+    CHECK(st3.exportTo("Out Name", v, base + "/exp", nullptr) && fs::exists(base + "/exp/Out Name.lstrip.json"), "export writes a file");
     fs::remove_all(base);
 }
 
 int main() {
     testPresetStore();
     testParamTable(); testPassthrough(); testBlockSizes(); testGate(); testCompressor(); testDeEsser();
-    testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testFuzz();
+    testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testConcurrentParams(); testFuzz();
     std::printf("\n%d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

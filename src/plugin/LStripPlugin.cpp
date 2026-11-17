@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "DistrhoPlugin.hpp"
 #include "DistrhoPluginUtils.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -33,7 +34,8 @@ protected:
     const char* getLabel() const override { return "L-STRIP"; }
     const char* getDescription() const override {
         return "One-stop vocal chain: gate, pitch correction, compressor, de-esser, EQ, "
-               "multiband, space and a safety limiter in a single window.";
+               "multiband, space and a safety limiter in a single window. "
+               "Built with the DISTRHO Plugin Framework (DPF, ISC licence).";
     }
     const char* getMaker() const override { return "L-STRIP contributors"; }
     const char* getHomePage() const override { return "https://github.com/niizam/L-STRIP"; }
@@ -115,14 +117,32 @@ protected:
     void run(const float** in, float** out, uint32_t frames) override {
         const TimePosition& tp = getTimePosition();
         if (tp.bbt.valid) chain_.setTempo(tp.bbt.beatsPerMinute);
+        reportLatency(); // setLatency() is only legal from the constructor, activate() and run()
+       #if DISTRHO_PLUGIN_NUM_INPUTS == 1
+        // Mono variant: the chain is stereo internally.  Feed the mono input to both sides and fold the
+        // (reverb/chorus-widened) result back to one channel.  Never touches a second host buffer, so it is
+        // safe in hosts that hand out uninitialised memory for missing channels (see Documentation/obs.rst).
+        for (uint32_t pos = 0; pos < frames;) {
+            const uint32_t n = std::min<uint32_t>(frames - pos, kMonoChunk);
+            std::memcpy(monoL_, in[0] + pos, sizeof(float) * n);
+            std::memcpy(monoR_, in[0] + pos, sizeof(float) * n);
+            chain_.process(monoL_, monoR_, static_cast<int>(n));
+            for (uint32_t i = 0; i < n; ++i) out[0][pos + i] = 0.5f * (monoL_[i] + monoR_[i]);
+            pos += n;
+        }
+       #else
         if (out[0] != in[0]) std::memcpy(out[0], in[0], sizeof(float) * frames);
         if (out[1] != in[1]) std::memcpy(out[1], in[1], sizeof(float) * frames);
-        reportLatency(); // setLatency() is only legal from the constructor, activate() and run()
         chain_.process(out[0], out[1], static_cast<int>(frames));
+       #endif
         for (uint32_t i = lstrip::kNumInputParams; i < lstrip::kParamCount; ++i) { values_[i] = chain_.output(i); shared_->set(i, values_[i]); }
     }
 
 private:
+   #if DISTRHO_PLUGIN_NUM_INPUTS == 1
+    static constexpr uint32_t kMonoChunk = 512;
+    float monoL_[kMonoChunk], monoR_[kMonoChunk];
+   #endif
     void reportLatency() {
         const int lat = reportsLatency_ ? chain_.latency() : 0;
         if (lat != reportedLatency_) { reportedLatency_ = lat; setLatency(static_cast<uint32_t>(lat)); }

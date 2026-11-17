@@ -43,6 +43,28 @@ public:
     }
 
     const std::string& dataDir() const { return dataDir_; }
+
+    // Folder used by Export: <XDG documents dir>/L-STRIP (default ~/Documents/L-STRIP).
+    // The save dialog of DPF's X11 file browser is not implemented, so export never asks for a path.
+    static std::string exportDir() {
+        const char* h = std::getenv("HOME");
+        const std::string home = h && *h ? h : "/tmp";
+        const char* cfg = std::getenv("XDG_CONFIG_HOME");
+        const std::string cfgDir = cfg && *cfg ? cfg : home + "/.config";
+        std::string docs = home + "/Documents";
+        std::ifstream f(cfgDir + "/user-dirs.dirs");
+        std::string line;
+        while (std::getline(f, line)) {
+            const std::string key = "XDG_DOCUMENTS_DIR=";
+            if (line.compare(0, key.size(), key) != 0) continue;
+            std::string v = line.substr(key.size());
+            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+            const std::string tok = "$HOME";
+            if (v.compare(0, tok.size(), tok) == 0) v = home + v.substr(tok.size());
+            if (!v.empty() && v[0] == '/' && v != home + "/") docs = v;
+        }
+        return docs + "/L-STRIP";
+    }
     const std::vector<UserPreset>& user() const { return user_; }
 
     // ---------------------------------------------------------------- presets

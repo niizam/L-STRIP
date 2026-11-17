@@ -3,7 +3,7 @@
 // glue (not just the DSP): entry point, parameter mapping, programs, latency
 // reporting, state chunks and audio equality with the reference Chain.
 //
-// Usage: lstrip-vst2-host-test /path/to/L-STRIP-vst2.so
+// Usage: lstrip-vst2-host-test /path/to/plugin.so [mono]
 #include "../src/dsp/Chain.hpp"
 #include "../src/common/Presets.hpp"
 
@@ -86,6 +86,7 @@ static std::vector<float> voice(double f0, size_t n, double sr) {
 int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: %s plugin.so\n", argv[0]); return 2; }
     const double SR = 48000.0; const int BLOCK = 512;
+    const bool mono = argc > 2 && std::strcmp(argv[2], "mono") == 0;
     Plugin p;
     if (!p.load(argv[1])) return 1;
     AEffect* fx = p.fx;
@@ -93,13 +94,13 @@ int main(int argc, char** argv) {
     std::printf("metadata\n");
     CHECK(fx->magic == 0x56737450, "magic 'VstP' (got 0x%x)", fx->magic);
     CHECK(fx->numParams == static_cast<int>(kNumInputParams), "VST2 exposes only input params (%d vs %u); outputs stay internal", fx->numParams, kNumInputParams);
-    CHECK(fx->numInputs == 2 && fx->numOutputs == 2, "stereo in/out (%d/%d)", fx->numInputs, fx->numOutputs);
+    CHECK(fx->numInputs == (mono ? 1 : 2) && fx->numOutputs == (mono ? 1 : 2), "%s in/out (%d/%d)", mono ? "mono" : "stereo", fx->numInputs, fx->numOutputs);
         CHECK((fx->flags & 1) != 0, "has editor");
     CHECK((fx->flags & 16) != 0, "supports processReplacing");
     p.start(SR, BLOCK);
     char buf[256] = {};
     fx->dispatcher(fx, effGetEffectName, 0, 0, buf, 0);
-    CHECK(std::strcmp(buf, "L-STRIP") == 0, "effect name '%s'", buf);
+    CHECK(std::strcmp(buf, mono ? "L-STRIP Mono" : "L-STRIP") == 0, "effect name '%s'", buf);
 
     std::printf("parameter mapping\n");
     // All inputs precede all outputs (VST2 requirement) and round-trip through normalised values.
@@ -135,6 +136,7 @@ int main(int argc, char** argv) {
         const std::vector<float> src = voice(180.0 + 7.0 * k, 24000, SR);
         std::vector<float> rl = src, rr = src, ol(src.size()), orr(src.size());
         ref.process(rl.data(), rr.data(), static_cast<int>(rl.size()));
+        if (mono) for (size_t i = 0; i < rl.size(); ++i) rl[i] = 0.5f * (rl[i] + rr[i]);   // the mono build folds L/R
         // fresh plugin state per preset: reset via suspend/resume
         fx->dispatcher(fx, effMainsChanged, 0, 0, nullptr, 0);
         fx->dispatcher(fx, effMainsChanged, 0, 1, nullptr, 0);
@@ -142,8 +144,10 @@ int main(int argc, char** argv) {
         size_t pos = 0; int bi = 0; double maxErr = 0;
         while (pos < src.size()) {
             const int n = static_cast<int>(std::min<size_t>(blocks[bi++ % 3], src.size() - pos));
-            float* in[2] = {const_cast<float*>(src.data()) + pos, const_cast<float*>(src.data()) + pos};
-            float* out[2] = {ol.data() + pos, orr.data() + pos};
+            // The mono build must never touch a second channel: give it a null pointer (obs-vst hands out
+            // uninitialised memory there).  Out-of-place for mono, in-place for stereo is covered below.
+            float* in[2] = {const_cast<float*>(src.data()) + pos, mono ? nullptr : const_cast<float*>(src.data()) + pos};
+            float* out[2] = {ol.data() + pos, mono ? nullptr : orr.data() + pos};
             fx->processReplacing(fx, in, out, n);
             pos += n;
         }

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+name: build
+on: [push, pull_request]
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libgl-dev libasound2-dev libpulse-dev \
+            libjack-jackd2-dev python3-docutils
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Validate documentation
+        run: |
+          for f in README.rst THIRD-PARTY.rst Documentation/*.rst; do rst2html --halt=warning "$f" > /dev/null; done
