@@ -9,6 +9,10 @@
 #include <cstdint>
 #include <vector>
 
+#if defined(__SSE__)
+#include <xmmintrin.h>   // must stay outside the namespace
+#endif
+
 namespace lstrip::dsp {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -25,9 +29,6 @@ inline float timeCoef(float seconds, double sr) {
 }
 
 // Flush denormals for the lifetime of the object (x86 only; no-op elsewhere).
-#if defined(__SSE__)
-#include <xmmintrin.h>
-#endif
 struct ScopedNoDenormals {
 #if defined(__SSE__)
     unsigned int old;
