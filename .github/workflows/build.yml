@@ -12,7 +12,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libx11-dev libxext-dev \
-            libxrandr-dev libxcursor-dev libgl-dev libasound2-dev libpulse-dev \
+            libxrandr-dev libxcursor-dev libcairo2-dev libfreetype-dev libasound2-dev libpulse-dev \
             libjack-jackd2-dev python3-docutils
       - name: Configure and build
         run: |

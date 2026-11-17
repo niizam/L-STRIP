@@ -11,8 +11,9 @@ Principles
   draggable; nothing needs a dialog.
 * Always legible.  Values are printed in plain units; hover tips explain
   every control in one sentence.
-* Never in the way of the voice.  The interface repaints at about 60 Hz but
-  does no work on the audio thread.
+* Never in the way of the voice.  The interface repaints at about 30 Hz but
+  does no work on the audio thread.  Drawing is software (Cairo) so it never
+  touches the host's graphics driver; see ``design.rst``.
 
 The visual language (rounded dark cards, a single blue accent, spaced
 capitals for labels, the glowing particle orb) and the arrangement of the
@@ -110,4 +111,5 @@ Known limitations
 * No keyboard focus navigation yet; the editor is pointer driven.
 * The editor needs an X11 window.  On a Wayland session host applications
   must run through XWayland (see ``obs.rst``).
-* The pitch trace and meters are sampled at about 60 Hz.
+* The editor repaints at about 30 Hz; the pitch trace and meters are
+  sampled at about 60 Hz.

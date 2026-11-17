@@ -140,6 +140,20 @@ The editor adopts a value from ``SharedState`` only when that value
 reaches the DSP only after the host forwards it; adopting "any difference"
 would flicker edits back.
 
+Rendering: Cairo, not OpenGL
+============================
+
+The editor is software-rendered with Cairo (``src/ui/Gfx.hpp`` is a small
+drawing layer with NanoVG-style calls on top of Cairo, plus FreeType for the
+embedded Inter fonts).  The first version used DPF's OpenGL/NanoVG backend and
+it looked identical, but it crashed OBS Studio: OBS renders through EGL, and
+creating a GLX context for the editor inside the OBS process made OBS's render
+thread fault (in the X11 screen-capture copy) on NVIDIA's proprietary driver.
+The crash also happened with the editor worker thread disabled, and did not
+happen with a Cairo editor.  A software-rendered editor shares no GL state
+with the host, so it cannot interfere with the host's renderer.  The editor
+repaints at about 30 frames per second.
+
 Formats and latency
 ===================
 

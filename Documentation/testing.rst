@@ -125,6 +125,18 @@ The editor and the audio path were also verified in OBS Studio:
 3. Raise the editor window and take screenshots; two frames a second apart
    differ.
 
+Regression: OBS on NVIDIA
+-------------------------
+
+A user report showed OBS crashing in its render thread when the editor was
+opened (NVIDIA RTX 3080 Ti, proprietary driver 615, X11).  It was reproduced
+with an isolated OBS profile that has a screen-capture source plus the plugin
+with ``open_when_active_vst_settings``: OBS segfaulted in ``xshm_video_tick``.
+Controls: the same scene without the plugin ran cleanly; with the editor worker
+thread disabled it still crashed; a DPF example plugin with a Cairo editor ran
+cleanly.  After the editor moved to Cairo the scene ran for the full test
+duration with live meters and no core dump.
+
 What is not covered
 ===================
 

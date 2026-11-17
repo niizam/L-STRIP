@@ -8,6 +8,7 @@
 
 #include "../common/Params.hpp"
 #include "../common/Shared.hpp"
+#include "Gfx.hpp"
 #include "Theme.hpp"
 
 #include <chrono>
@@ -22,7 +23,7 @@ constexpr float kW = 940.f, kH = 640.f;
 
 struct Control;
 
-class UiBase : public DISTRHO_NAMESPACE::UI {
+class UiBase : public DISTRHO_NAMESPACE::UI, public Gfx {
 public:
     UiBase();
 

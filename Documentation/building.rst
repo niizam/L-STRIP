@@ -18,25 +18,27 @@ If you already cloned without ``--recursive``::
 Dependencies
 ============
 
-A C++17 compiler, CMake 3.15 or newer, pkg-config, and the X11 and OpenGL
-development files.  The standalone application additionally uses whichever
-of ALSA, PulseAudio and JACK development files are installed.
+A C++17 compiler, CMake 3.15 or newer, pkg-config, and the X11, Cairo and
+FreeType development files.  There is no OpenGL dependency.  The standalone
+application additionally uses whichever of ALSA, PulseAudio and JACK
+development files are installed.
 
 Arch Linux::
 
     pacman -S --needed base-devel cmake pkgconf libx11 libxext libxrandr \
-        libxcursor mesa alsa-lib libpulse jack2
+        libxcursor cairo freetype2 alsa-lib libpulse jack2
 
 Debian / Ubuntu::
 
     apt install build-essential cmake pkg-config libx11-dev libxext-dev \
-        libxrandr-dev libxcursor-dev libgl-dev libasound2-dev \
-        libpulse-dev libjack-jackd2-dev
+        libxrandr-dev libxcursor-dev libcairo2-dev libfreetype-dev \
+        libasound2-dev libpulse-dev libjack-jackd2-dev
 
 Fedora::
 
     dnf install gcc-c++ cmake pkgconf-pkg-config libX11-devel \
-        libXext-devel libXrandr-devel libXcursor-devel mesa-libGL-devel \
+        libXext-devel libXrandr-devel libXcursor-devel cairo-devel \
+        freetype-devel \
         alsa-lib-devel pulseaudio-libs-devel jack-audio-connection-kit-devel
 
 Build

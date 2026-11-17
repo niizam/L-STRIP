@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // L-STRIP editor: layout of the five panels, header, overlays and event routing.
 #include "Application.hpp"
+#include "Cairo.hpp"
 #include "Window.hpp"
 
 #include "Controls.hpp"
@@ -114,7 +115,8 @@ protected:
     }
 
     // ------------------------------------------------------------- drawing
-    void onNanoDisplay() override {
+    void onCairoDisplay(const CairoGraphicsContext& context) override {
+        gfxBegin(context.handle);
         const float W = static_cast<float>(getWidth()), H = static_cast<float>(getHeight());
         const float s = std::min(W / kW, H / kH);
         ox_ = (W - kW * s) * 0.5f; oy_ = (H - kH * s) * 0.5f; scale_ = s;
@@ -475,7 +477,7 @@ private:
         const double t = now();
         trace_.sample(t, get(kTuneInMidi), get(kTuneOutMidi));
         if (themeBtn_) { themeBtn_->label = dark() ? "Light" : "Dark"; themeBtn_->icon = dark() ? 4 : 3; }
-        repaint();
+        if (now() - lastPaint_ > 0.030) { lastPaint_ = now(); repaint(); }   // ~30 fps: this is software rendering
     }
 
     void drawTooltip() {
@@ -525,6 +527,7 @@ private:
     float ox_ = 0, oy_ = 0, scale_ = 1;
     double lastClickT_ = 0; float lastClickX_ = 0, lastClickY_ = 0;
     unsigned tickCount_ = 0;
+    double lastPaint_ = 0;
     bool identified_ = false;
 };
 

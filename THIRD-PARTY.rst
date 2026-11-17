@@ -14,11 +14,6 @@ DPF (DISTRHO Plugin        ISC       2012-2025 Filipe Coelho and
 Framework), including DGL            contributors; ``vendor/dpf/LICENSE``
 pugl (windowing)           ISC       2011-2022 David Robillard;
                                      ``vendor/dpf/dgl/src/pugl-upstream``
-NanoVG, fontstash          zlib      2013 Mikko Mononen;
-                                     ``vendor/dpf/dgl/src/nanovg``
-stb_truetype, stb_image    MIT or    Sean Barrett;
-                           public    ``vendor/dpf/dgl/src/nanovg``
-                           domain
 libSOFD (file dialog)      MIT       2014 Robin Gareus;
                                      ``vendor/dpf/distrho/extra/sofd``
 VST2 interface description MIT/BSD   2020 Michael Fabian Dirks;
@@ -38,6 +33,10 @@ Inter typeface (Regular    SIL OFL   2016 The Inter Project Authors;
 and SemiBold), embedded    1.1       ``assets/fonts/OFL-Inter.txt``
 ========================== ========= ====================================
 
+The editor is drawn with two system libraries that are *linked dynamically*
+and not bundled: Cairo (LGPL 2.1 or MPL 1.1) and FreeType (FreeType License
+or GPLv2).  Their licences apply to those libraries; this project's code is
+not derived from them.
 Installed packages include this file, ``COPYING`` and the font licence under
 ``share/doc/l-strip``.
 

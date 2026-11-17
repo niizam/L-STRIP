@@ -67,6 +67,10 @@ Tempo-synced delay
 Why the editor behaves the way it does
 ======================================
 
+The editor is drawn in software (Cairo), not with OpenGL.  An OpenGL editor
+inside the OBS process crashed OBS on NVIDIA's proprietary driver (OBS renders
+with EGL; see ``design.rst``).
+
 OBS never gives plugin editors an idle callback on Linux (the VST protocol
 expects the host to do so about 30 times a second).  Most plugin
 frameworks therefore show a frozen or blank window in OBS.  L-STRIP detects

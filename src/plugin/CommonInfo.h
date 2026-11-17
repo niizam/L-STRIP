@@ -19,7 +19,8 @@
 #define DISTRHO_PLUGIN_WANT_TIMEPOS      1
 #define DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1
 
-#define DISTRHO_UI_USE_NANOVG            1
+// Cairo (software) rendering, not OpenGL: an OpenGL editor window crashed OBS's EGL render thread on NVIDIA.
+#define DISTRHO_UI_USE_CAIRO             1
 #define DISTRHO_UI_USER_RESIZABLE        1
 #define DISTRHO_UI_FILE_BROWSER          1
 #define DISTRHO_UI_DEFAULT_WIDTH         940

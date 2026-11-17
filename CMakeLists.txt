@@ -48,7 +48,7 @@ if(LSTRIP_BUILD_PLUGINS)
 
   dpf_add_plugin(L-STRIP
     TARGETS vst2 vst3 lv2 clap jack
-    UI_TYPE opengl
+    UI_TYPE cairo
     USE_FILE_BROWSER
     MONOLITHIC   # LV2: UI inside the DSP object, required by DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
     FILES_DSP
@@ -63,11 +63,13 @@ if(LSTRIP_BUILD_PLUGINS)
   target_link_libraries(L-STRIP PUBLIC lstrip_dsp)
   target_compile_definitions(L-STRIP PUBLIC LSTRIP_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts")
   find_package(Threads REQUIRED)
-  target_link_libraries(L-STRIP PUBLIC Threads::Threads)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FREETYPE REQUIRED IMPORTED_TARGET freetype2)   # editor text: Inter via FreeType + Cairo
+  target_link_libraries(L-STRIP PUBLIC Threads::Threads PkgConfig::FREETYPE)
   # Mono variant (1 in / 1 out) for hosts that feed single-channel sources, e.g. OBS microphones.
   dpf_add_plugin(L-STRIP-Mono
     TARGETS vst2 vst3 lv2 clap
-    UI_TYPE opengl
+    UI_TYPE cairo
     USE_FILE_BROWSER
     MONOLITHIC   # LV2: UI inside the DSP object, required by DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
     FILES_DSP
@@ -78,7 +80,7 @@ if(LSTRIP_BUILD_PLUGINS)
       src/ui/FontData.cpp)
   target_include_directories(L-STRIP-Mono PUBLIC src/plugin-mono src)
   target_compile_options(L-STRIP-Mono PUBLIC -O2 -fno-math-errno)
-  target_link_libraries(L-STRIP-Mono PUBLIC lstrip_dsp Threads::Threads)
+  target_link_libraries(L-STRIP-Mono PUBLIC lstrip_dsp Threads::Threads PkgConfig::FREETYPE)
   target_compile_definitions(L-STRIP-Mono PUBLIC LSTRIP_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts")
 endif()
 
