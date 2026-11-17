@@ -36,7 +36,7 @@ public:
         for (auto& d : delay_) d.clear();
         for (auto& c : chorus_) c.clear();
         env_.env = 0; rvDuck_ = dlDuck_ = 0; lpS_[0] = lpS_[1] = hpS_[0] = hpS_[1] = 0;
-        lfoPhase_ = 0; delaySamples_ = -1;
+        lfoPhase_ = 0; delaySamples_ = delayTarget_; // snap: no echo-time sweep after a reset
     }
     void set(const SpaceSettings& s) {
         if (s.type != s_.type || first_) reverb_.setType(s.type);
@@ -46,7 +46,7 @@ public:
         const int idx = std::min(std::max(s.delayIdx, 0), 9);
         delayTarget_ = static_cast<float>(60.0 / bpm * kDelayTimeBeats[idx] * sr_);
         delayTarget_ = std::min(delayTarget_, static_cast<float>(4.0 * sr_));
-        if (delaySamples_ < 0) delaySamples_ = delayTarget_;
+        if (!delayInit_) { delaySamples_ = delayTarget_; delayInit_ = true; }
     }
     float reverbSendDb() const { return rvSendDb_; }
     float delaySendDb() const { return dlSendDb_; }
@@ -131,7 +131,8 @@ private:
     EnvFollower env_;
     float duckAtt_ = 0, duckRel_ = 0, rvDuck_ = 0, dlDuck_ = 0;
     float fbLpC_ = 0, fbHpC_ = 0, lpS_[2] = {}, hpS_[2] = {};
-    float lfoPhase_ = 0, delaySamples_ = -1, delayTarget_ = 0;
+    float lfoPhase_ = 0, delaySamples_ = 0, delayTarget_ = 0;
+    bool delayInit_ = false;
     float rvSendDb_ = -80, dlSendDb_ = -80, rvGrDb_ = 0, dlGrDb_ = 0;
 };
 

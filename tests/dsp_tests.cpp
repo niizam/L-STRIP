@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Headless DSP tests for L-STRIP.  No framework needed; returns non-zero on failure.
 #include "../src/dsp/Chain.hpp"
+#include "../src/common/PresetStore.hpp"
+#include <filesystem>
 
 #include <cstdio>
 #include <cstdlib>
@@ -81,7 +83,7 @@ static void testPassthrough() {
     CHECK(maxErr < 1e-5, "unity passthrough, max error %g", maxErr);
     CHECK(c.latency() == 0, "latency 0 when tune off");
     c.setParam(kTuneOn, 1);
-    CHECK(c.latency() == static_cast<int>(std::lround(0.006 * SR)), "tune latency %d", c.latency());
+    CHECK(c.latency() == static_cast<int>(std::lround(0.010 * SR)), "tune latency %d", c.latency());
     c.setParam(kMasterOn, 0);
     CHECK(c.latency() == 0, "latency 0 when master off");
 }
@@ -157,6 +159,34 @@ static void testLimiter() {
     CHECK(pk <= dbToLin(-1.f) + 1e-4f, "limited peak %.4f", pk);
 }
 
+static void testGateAtIntensity() {
+    std::printf("gate stays effective at Intensity < 100%%\n");
+    Chain c; c.prepare(SR); setAllOff(c); c.setParam(kGateThresh, -40); c.setParam(kIntensity, 70);
+    std::vector<float> l(48000); std::mt19937 g(7); std::uniform_real_distribution<float> u(-1, 1);
+    for (auto& v : l) v = u(g) * 0.002f; // -54 dBFS room noise
+    auto r = l; runChain(c, l, r);
+    CHECK(rmsDb(l, 24000, 48000) < -85.f, "noise stays gated at 70%% intensity: %.1f dB", rmsDb(l, 24000, 48000));
+}
+
+static void testTuneAlignment() {
+    std::printf("tune dry/wet time alignment\n");
+    // A 110 Hz voice exactly on A2: no correction needed, so Intensity 70%% with tune on
+    // must equal Intensity 70%% with tune off, delayed by the reported latency.
+    auto run = [&](bool tuneOn, std::vector<float>& out, int& lat) {
+        Chain c; c.prepare(SR); setAllOff(c); c.setParam(kIntensity, 70); c.setParam(kTuneOn, tuneOn);
+        c.setParam(kTuneScale, 2); c.setParam(kTuneSpeed, 0); c.setParam(kTuneHumanize, 0);
+        c.setParam(kDynOn, 1); c.setParam(kCompMix, 0); c.setParam(kDeessAmount, 0); // trivial processing so wet != dry
+        c.setParam(kEqOn, 1); c.setParam(kEqLow, 0); c.setParam(kEqMid, 0); c.setParam(kEqHigh, 0); c.setParam(kEqAir, 6);
+        std::vector<float> l = voice(110.0, 48000, 0.3f), r = l; runChain(c, l, r); out = l; lat = c.latency();
+    };
+    std::vector<float> on, off; int latOn = 0, latOff = 0;
+    run(true, on, latOn); run(false, off, latOff);
+    double e = 0, ref = 0;
+    for (size_t i = 30000; i < 46000; ++i) { const double d = on[i] - off[i - latOn]; e += d * d; ref += off[i - latOn] * (double)off[i - latOn]; }
+    const double errDb = 10 * std::log10(e / ref + 1e-20);
+    CHECK(errDb < -14.0, "aligned dry/wet at 110 Hz: error %.1f dB (latency %d)", errDb, latOn);
+}
+
 static void testEq() {
     std::printf("equalizer response\n");
     EqSettings s; s.low = 6; s.mid = 0; s.high = 0; s.air = 0; s.lowCut = 100; s.style = 0;
@@ -213,7 +243,7 @@ static void testPitch() {
         const double got = measureHz(l, 30000, 46000, k.expectHz * 0.9, k.expectHz * 1.1);
         const double err = cents(got, k.expectHz);
         CHECK(std::fabs(err) < 8.0, "%s: got %.2f Hz (%.1f cents off)", k.name, got, err);
-        CHECK(c.latency() == static_cast<int>(std::lround(0.006 * SR)), "latency reported");
+        CHECK(c.latency() == static_cast<int>(std::lround(0.010 * SR)), "latency reported");
     }
     // Detection readout
     {
@@ -256,20 +286,56 @@ static void testFuzz() {
     bool fin = true; float pk = 0;
     for (int iter = 0; iter < 300; ++iter) {
         for (uint32_t i = 0; i < kNumInputParams; ++i) {
+            if (i == kMasterOn) continue;
             if (u(g) < 0.15f) c.setParam(i, kParams[i].min + u(g) * (kParams[i].max - kParams[i].min));
         }
         std::vector<float> l = src, r = src;
         for (auto& v : l) v *= (u(g) < 0.1f ? 4.f : 1.f);
+        // (peak is checked per block after the +24 dB input gain worst case)
         c.process(l.data(), r.data(), static_cast<int>(l.size()));
         for (size_t i = 0; i < l.size(); ++i) { fin &= std::isfinite(l[i]) && std::isfinite(r[i]); pk = std::max(pk, std::max(std::fabs(l[i]), std::fabs(r[i]))); }
     }
     CHECK(fin, "no NaN/Inf under random automation");
-    CHECK(pk < 200.f, "bounded output (peak %.2f; +24 dB out gain sits after the limiter)", pk);
+    CHECK(pk <= dbToLin(-1.f) + 1e-3f || c.param(kMasterOn) < 0.5f, "limiter is last: peak %.3f", pk);
+}
+
+static void testPresetStore() {
+    std::printf("preset store + json\n");
+    namespace fs = std::filesystem;
+    const std::string base = "lstrip_test_store";
+    fs::remove_all(base);
+    PresetStore st(base + "/presets", base + "/config");
+    float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = kParams[i].def;
+    v[kIntensity] = 42; v[kEqAir] = -3.25f; v[kTuneOn] = 1;
+    std::string err;
+    CHECK(st.save("My \"Vocal\"/Chain", v, &err), "save: %s", err.c_str());
+    CHECK(!st.save("Init", v, &err), "factory names are protected");
+    CHECK(!st.save("   ", v, &err), "empty name rejected");
+    PresetStore st2(base + "/presets", base + "/config"); st2.reload();
+    const UserPreset* p = st2.find("My \"Vocal\"/Chain");
+    CHECK(p && std::fabs(p->values[kIntensity] - 42) < 1e-4 && std::fabs(p->values[kEqAir] + 3.25f) < 1e-4 && p->values[kTuneOn] == 1, "roundtrip");
+    CHECK(st2.rename("My \"Vocal\"/Chain", "Renamed", &err) && st2.find("Renamed") && !st2.find("My \"Vocal\"/Chain"), "rename");
+    std::string imported; CHECK(st2.importFile(base + "/presets/Renamed.lstrip.json", &imported, &err) && imported != "Renamed", "import avoids name clash: %s", imported.c_str());
+    // hostile files
+    { std::ofstream f(base + "/presets/bad.lstrip.json"); f << "{\"format\":\"lstrip-preset\",\"name\":\"X\",\"params\":{\"intensity\":1e99,\"nonsense\":5,\"eq_air\":\"str\"}}"; }
+    { std::ofstream f(base + "/presets/junk.lstrip.json"); f << "{{{{ not json"; }
+    { std::ofstream f(base + "/presets/deep.lstrip.json"); f << std::string(5000, '['); }
+    st2.reload();
+    const UserPreset* x = st2.find("X");
+    CHECK(x && x->values[kIntensity] == 100.f && x->values[kEqAir] == kParams[kEqAir].def, "values clamped / bad types defaulted");
+    CHECK(st2.remove("Renamed") && !st2.find("Renamed"), "delete");
+    st2.toggleStar("Podcast Clean"); st2.setDark(false);
+    PresetStore st3(base + "/presets", base + "/config"); st3.loadConfig();
+    CHECK(st3.starred("Podcast Clean") && !st3.dark(), "config roundtrip");
+    Json j; CHECK(Json::parse("{\"a\":[1,2,{\"b\":\"\\u00e9\\n\"}],\"c\":true}", j) && j.get("a")->a.size() == 3 && j.get("c")->b, "json parse");
+    CHECK(!Json::parse("[1,2", j) && !Json::parse("{\"a\":}", j) && !Json::parse("nan", j), "json rejects garbage");
+    fs::remove_all(base);
 }
 
 int main() {
+    testPresetStore();
     testParamTable(); testPassthrough(); testBlockSizes(); testGate(); testCompressor(); testDeEsser();
-    testLimiter(); testEq(); testMultiband(); testSpace(); testPitch(); testFuzz();
+    testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testFuzz();
     std::printf("\n%d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

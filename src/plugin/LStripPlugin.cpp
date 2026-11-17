@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 #include "DistrhoPlugin.hpp"
+#include <cstdio>
+#include <cstdlib>
 
 #include "../common/Presets.hpp"
+#include "../common/Shared.hpp"
 #include "../dsp/Chain.hpp"
 
 START_NAMESPACE_DISTRHO
@@ -14,8 +17,12 @@ public:
         : Plugin(lstrip::kParamCount, lstrip::kNumFactoryPresets, kStateCount)
     {
         chain_.prepare(getSampleRate());
+        shared_ = std::make_shared<lstrip::SharedState>();
+        lstrip::SharedRegistry::instance().add(static_cast<Plugin*>(this), shared_);
         for (uint32_t i = 0; i < lstrip::kParamCount; ++i) values_[i] = lstrip::kParams[i].def;
     }
+
+    ~LStripPlugin() override { lstrip::SharedRegistry::instance().remove(static_cast<Plugin*>(this)); }
 
 protected:
     const char* getLabel() const override { return "L-STRIP"; }
@@ -70,8 +77,8 @@ protected:
     void setParameterValue(uint32_t index, float value) override {
         if (index >= lstrip::kNumInputParams) return;
         values_[index] = value;
+        shared_->set(index, value);
         chain_.setParam(index, value);
-        if (index == lstrip::kTuneOn || index == lstrip::kMasterOn) setLatency(static_cast<uint32_t>(chain_.latency()));
     }
 
     // --------------------------------------------------------------- programs
@@ -93,11 +100,11 @@ protected:
     void setState(const char* key, const char* value) override { if (std::strcmp(key, "preset") == 0) presetName_ = value; }
 
     // ------------------------------------------------------------------- audio
-    void activate() override { chain_.reset(); setLatency(static_cast<uint32_t>(chain_.latency())); }
+    void activate() override { chain_.reset(); reportLatency(); }
     void sampleRateChanged(double sr) override {
         chain_.prepare(sr);
         for (uint32_t i = 0; i < lstrip::kNumInputParams; ++i) chain_.setParam(i, values_[i]);
-        setLatency(static_cast<uint32_t>(chain_.latency()));
+        reportLatency();
     }
 
     void run(const float** in, float** out, uint32_t frames) override {
@@ -105,11 +112,18 @@ protected:
         if (tp.bbt.valid) chain_.setTempo(tp.bbt.beatsPerMinute);
         if (out[0] != in[0]) std::memcpy(out[0], in[0], sizeof(float) * frames);
         if (out[1] != in[1]) std::memcpy(out[1], in[1], sizeof(float) * frames);
+        reportLatency(); // setLatency() is only legal from the constructor, activate() and run()
         chain_.process(out[0], out[1], static_cast<int>(frames));
-        for (uint32_t i = lstrip::kNumInputParams; i < lstrip::kParamCount; ++i) values_[i] = chain_.output(i);
+        for (uint32_t i = lstrip::kNumInputParams; i < lstrip::kParamCount; ++i) { values_[i] = chain_.output(i); shared_->set(i, values_[i]); }
     }
 
 private:
+    void reportLatency() {
+        const int lat = chain_.latency();
+        if (lat != reportedLatency_) { reportedLatency_ = lat; setLatency(static_cast<uint32_t>(lat)); }
+    }
+    int reportedLatency_ = -1;
+    std::shared_ptr<lstrip::SharedState> shared_;
     lstrip::dsp::Chain chain_;
     float values_[lstrip::kParamCount];
     String presetName_;

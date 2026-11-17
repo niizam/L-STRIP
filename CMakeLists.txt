@@ -38,9 +38,22 @@ if(LSTRIP_BUILD_PLUGINS)
     FILES_DSP
       src/plugin/LStripPlugin.cpp
     FILES_UI
-      src/ui/LStripUI.cpp)
+      src/ui/LStripUI.cpp
+      src/ui/UiBase.cpp
+      src/ui/FontData.cpp)
 
   target_include_directories(L-STRIP PUBLIC src/plugin src)
   target_compile_options(L-STRIP PUBLIC -O2 -fno-math-errno)
   target_link_libraries(L-STRIP PUBLIC lstrip_dsp)
+  target_compile_definitions(L-STRIP PUBLIC LSTRIP_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts")
+  find_package(Threads REQUIRED)
+  target_link_libraries(L-STRIP PUBLIC Threads::Threads)
+endif()
+
+# VST2 glue test: loads the built plugin like a host would.
+if(LSTRIP_BUILD_PLUGINS AND LSTRIP_BUILD_TESTS)
+  add_executable(lstrip-vst2-host-test tests/vst2_host_test.cpp)
+  target_link_libraries(lstrip-vst2-host-test PRIVATE lstrip_dsp ${CMAKE_DL_LIBS})
+  add_dependencies(lstrip-vst2-host-test L-STRIP-vst2)
+  add_test(NAME vst2-host COMMAND lstrip-vst2-host-test $<TARGET_FILE:L-STRIP-vst2>)
 endif()

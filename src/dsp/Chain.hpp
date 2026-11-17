@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 // The complete L-STRIP signal chain (framework independent).
 //
-//   in gain -> Gate -> Auto-tune -> Compressor -> De-esser -> EQ -> Multiband
-//           -> Space -> Out Sat -> Limiter -> Intensity blend -> out gain
+//   in gain -> Gate -+-> Auto-tune -> Compressor -> De-esser -> EQ -> Multiband
+//                    |   -> Space ---------------------------------+
+//                    +-> (dry, delayed to match tune latency) -> Intensity blend
+//   -> out gain -> Out Sat -> Limiter            (master off = raw bypass)
 //
-// Everything is zero-latency except Auto-tune, which adds PitchCorrector's
-// fixed latency while enabled (the Intensity dry path is delayed to match).
+// The Intensity dry path is tapped *after* the gate, so the gate keeps working at
+// any Intensity, and the limiter is the last stage, so nothing clips except the
+// raw master-off bypass.  Everything is zero-latency except Auto-tune, which adds
+// PitchCorrector's fixed latency while enabled (the dry path is delayed to match).
 #pragma once
 #include "Common.hpp"
 #include "Compressor.hpp"
@@ -176,6 +180,7 @@ private:
 
         const float gateGr = gate_.process(l, r, n);
         out_[kGateGR - kNumInputParams] = gateGr;
+        std::copy(l, l + n, gl_); std::copy(r, r + n, gr_); // gated dry tap
 
         module(0, p_[kTuneOn] > 0.5f, l, r, n, [&](float* a, float* b, int m) { tune_.process(a, b, m); });
         out_[kTuneInMidi - kNumInputParams] = tune_.readout().inMidi;
@@ -201,9 +206,6 @@ private:
         out_[kReverbDuckGR - kNumInputParams] = space_.reverbDuckGr();
         out_[kDelayDuckGR - kNumInputParams] = space_.delayDuckGr();
 
-        sat_.process(l, r, n);
-        lim_.process(l, r, n);
-
         // Intensity blend with latency-aligned dry, then output gain and master bypass.
         const float delayTarget = static_cast<float>(latency());
         mix_.setTarget(p_[kIntensity] * 0.01f, rampN_);
@@ -212,15 +214,21 @@ private:
         float outPk = 0.f, acc = 0.f;
         for (int i = 0; i < n; ++i) {
             dryDelaySm_ += clampf(delayTarget - dryDelaySm_, -0.2f, 0.2f);
-            dryDelay_[0].push(dl_[i]); dryDelay_[1].push(dr_[i]);
+            dryDelay_[0].push(gl_[i]); dryDelay_[1].push(gr_[i]);
             float d0, d1;
             if (dryDelaySm_ < 1.f) {
-                d0 = dl_[i] + (dryDelay_[0].read(1.f) - dl_[i]) * dryDelaySm_;
-                d1 = dr_[i] + (dryDelay_[1].read(1.f) - dr_[i]) * dryDelaySm_;
+                d0 = gl_[i] + (dryDelay_[0].read(1.f) - gl_[i]) * dryDelaySm_;
+                d1 = gr_[i] + (dryDelay_[1].read(1.f) - gr_[i]) * dryDelaySm_;
             } else { d0 = dryDelay_[0].read(dryDelaySm_); d1 = dryDelay_[1].read(dryDelaySm_); }
-            const float m = mix_.next(), g = outG_.next(), by = bypass_.next();
-            const float w0 = (d0 + (l[i] - d0) * m) * g, w1 = (d1 + (r[i] - d1) * m) * g;
-            l[i] = w0 + (d0 - w0) * by; r[i] = w1 + (d1 - w1) * by;
+            const float m = mix_.next(), g = outG_.next();
+            l[i] = (d0 + (l[i] - d0) * m) * g;
+            r[i] = (d1 + (r[i] - d1) * m) * g;
+        }
+        sat_.process(l, r, n);
+        lim_.process(l, r, n);
+        for (int i = 0; i < n; ++i) {
+            const float by = bypass_.next();           // master off: crossfade to the raw input
+            l[i] += (dl_[i] - l[i]) * by; r[i] += (dr_[i] - r[i]) * by;
             const float pk = std::max(std::fabs(l[i]), std::fabs(r[i]));
             outPk = std::max(outPk, pk); acc += pk * pk;
         }
@@ -242,7 +250,7 @@ private:
     DelayLine dryDelay_[2];
     float dryDelaySm_ = 0.f, orb_ = 0.f;
     int rampN_ = 240;
-    float dl_[kChunk], dr_[kChunk], tl_[kChunk], tr_[kChunk];
+    float dl_[kChunk], dr_[kChunk], gl_[kChunk], gr_[kChunk], tl_[kChunk], tr_[kChunk];
 };
 
 } // namespace lstrip::dsp

@@ -8,9 +8,11 @@
 //             cross-fade jump is a whole number of periods.  Small corrections
 //             make the taps sweep slowly, so jumps are rare.
 //
-// Latency: a fixed 6 ms (reported to the host while the module is enabled); the
-// real tap delay averages 0.5 ms + one pitch period (5.5 ms at 200 Hz, 10.5 ms
-// at 100 Hz).  The un-shifted path is delayed by the same fixed 6 ms.
+// Latency: a fixed 10 ms (reported to the host while the module is enabled).
+// The mean tap delay is held at that value by setting the minimum tap delay to
+// (10 ms - one pitch period), so the shifted and un-shifted (dry) paths stay
+// time-aligned for voices down to ~105 Hz (one period <= 9.5 ms).  Lower
+// voices are slightly late (mean delay = 0.5 ms + one period).
 #pragma once
 #include "Common.hpp"
 #include "PitchDetector.hpp"
@@ -31,7 +33,7 @@ struct TuneReadout {
 
 class PitchCorrector {
 public:
-    static constexpr float kLatencySec = 0.006f;
+    static constexpr float kLatencySec = 0.010f;
     static constexpr float kMinTapSec = 0.0005f;
 
     void prepare(double sr) {
@@ -57,7 +59,6 @@ public:
 
     void process(float* l, float* r, int n) {
         const float fsr = static_cast<float>(sr_);
-        const float dmin = kMinTapSec * fsr;
         const float fixedDelay = static_cast<float>(latency_);
         const float ratioC = 1.f - std::exp(-1.f / (0.002f * fsr));
         const float lenC = 1.f - std::exp(-1.f / (0.060f * fsr));
@@ -71,6 +72,7 @@ public:
             ratio_ += (std::exp2(corrCents_ * (1.f / 1200.f)) - ratio_) * ratioC;
             L_ += (2.f * T0_ - L_) * lenC;
             const float Lc = clampf(L_, 2.f * 0.0011f * fsr, maxL);
+            const float dmin = std::max(kMinTapSec * fsr, fixedDelay - 0.5f * Lc); // keeps mean tap delay == latency
             wet_ += (wetTarget_ - wet_) * wetC;
 
             u_ += (1.f - ratio_) / Lc;
