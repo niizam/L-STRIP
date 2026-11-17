@@ -85,10 +85,7 @@ int main() {
     for (uint32_t i : enums) {
         const ParamDef& d = kParams[i];
         std::printf("``%s``\n", d.symbol);
-        std::string line = "    ";
-        for (int k = 0; k <= static_cast<int>(d.max - d.min); ++k) line += std::to_string(k) + " = " + d.labels[k] + (k < static_cast<int>(d.max - d.min) ? ", " : "");
         // wrap at 79 columns
-        std::string out; size_t col = 0; std::string word;
         std::puts("");
         {
             std::string text; for (int k = 0; k <= static_cast<int>(d.max - d.min); ++k) text += std::to_string(k) + "=" + d.labels[k] + (k < static_cast<int>(d.max - d.min) ? "  " : "");
