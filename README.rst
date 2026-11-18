@@ -15,6 +15,16 @@ which adds about 10 ms while it is on.
 It ships as VST2, VST3, LV2 and CLAP plugins (each in a stereo and a mono
 variant) and as a standalone JACK application.
 
+.. image:: https://upload-os-bbs.hoyolab.com/upload/2026/11/18/123362388/5422e273e98582645b28258b535d48c1_5301584351069138156.png
+   :alt: Screenshot
+   :width: 500px
+   :align: center
+
+.. image:: https://upload-os-bbs.hoyolab.com/upload/2026/11/18/123362388/d66c4574c7b6ac5b0b7ffda503af3f3a_1573654047921911005.png
+   :alt: Screenshot
+   :width: 500px
+   :align: center
+
 Quick Start
 -----------
 
