@@ -189,6 +189,29 @@ integers and choices are floats with a ``kind``.  Frequencies and the
 chorus rate are logarithmic.  Outputs (meters, pitch readout) have the
 ``fOutput`` flag, are hidden from hosts, and never saved.
 
+Ids are permanent: saved sessions and presets refer to them.  Version 1.0
+shipped with the 62 controls first and the 15 outputs after them, so the
+controls added later (1.1 onwards) have ids *after* the outputs.  Nothing
+may therefore assume that outputs are "the last ids": the code asks the
+``fOutput`` flag (``isOutput``) and loops over ``kParamCount`` skipping
+outputs.  Preset value arrays are indexed by id and sized ``kParamCount``.
+
+Hosts see a different order.  DPF (and so VST2, which numbers parameters by
+position) wants every output after every input, so the plugin presents the
+controls in id order followed by the outputs; ``idToHost`` and ``hostToId``
+in ``Params.hpp`` convert, and a compile-time check keeps the outputs one
+contiguous block.  Ids below the first output keep their position, so
+sessions saved by 1.0 index the same controls; the new controls follow them
+at host indices 62 and up.  Only the meters moved, and hosts never saw
+those.
+
+Rule for new parameters: append, default to "no effect", and prove it with
+``tools/compat-check.sh`` (see ``testing.rst``).  Do not extend the range or
+the choice list of an existing parameter: hosts store normalised values, so
+that would change what an old session means.  This is why Transpose, the
+high-cut and the other 1.1 controls are new parameters, and why extra
+scales for Auto-tune were not added to the existing Scale choice.
+
 Session state beyond parameters is one string, ``preset`` (the name shown in
 the editor).  Theme and starred presets are per user, not per session, and
 live in ``~/.config/L-STRIP/ui.json``.

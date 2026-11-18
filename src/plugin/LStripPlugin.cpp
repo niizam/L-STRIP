@@ -40,12 +40,14 @@ protected:
     const char* getMaker() const override { return "L-STRIP contributors"; }
     const char* getHomePage() const override { return "https://github.com/niizam/L-STRIP"; }
     const char* getLicense() const override { return "MIT"; }
-    uint32_t getVersion() const override { return d_version(1, 0, 0); }
+    uint32_t getVersion() const override { return d_version(1, 1, 0); }
     int64_t getUniqueId() const override { return d_cconst('L', 'S', 't', 'p'); }
 
     // ------------------------------------------------------------- parameters
+    // DPF's parameter index (`index` below) is the host-facing order: inputs first, outputs last.  It differs from
+    // the permanent L-STRIP id (see idToHost/hostToId in Params.hpp); everything internal uses the id.
     void initParameter(uint32_t index, Parameter& p) override {
-        const lstrip::ParamDef& d = lstrip::kParams[index];
+        const lstrip::ParamDef& d = lstrip::kParams[lstrip::hostToId(index)];
         p.name = d.name;
         p.shortName = d.shortName;
         p.symbol = d.symbol;
@@ -74,18 +76,20 @@ protected:
         case lstrip::Unit::Percent: p.unit = "%"; break;
         case lstrip::Unit::Hz: case lstrip::Unit::kHz: p.unit = "Hz"; break;
         case lstrip::Unit::ms: p.unit = "ms"; break;
+        case lstrip::Unit::St: p.unit = "st"; break;
         default: p.unit = ""; break;
         }
         p.description = d.tip;
     }
 
-    float getParameterValue(uint32_t index) const override { return values_[index]; }
+    float getParameterValue(uint32_t index) const override { return values_[lstrip::hostToId(index)]; }
 
     void setParameterValue(uint32_t index, float value) override {
-        if (index >= lstrip::kNumInputParams) return;
-        values_[index] = value;
-        shared_->set(index, value);
-        chain_.setParam(index, value);
+        const uint32_t id = lstrip::hostToId(index);
+        if (id >= lstrip::kParamCount || lstrip::isOutput(id)) return;
+        values_[id] = value;
+        shared_->set(id, value);
+        chain_.setParam(id, value);
     }
 
     // --------------------------------------------------------------- programs
@@ -93,9 +97,10 @@ protected:
 
     void loadProgram(uint32_t index) override {
         if (index >= lstrip::kNumFactoryPresets) return;
-        float v[lstrip::kNumInputParams];
+        float v[lstrip::kParamCount];
         lstrip::presetToValues(lstrip::kFactoryPresets[index], v);
-        for (uint32_t i = 0; i < lstrip::kNumInputParams; ++i) setParameterValue(i, v[i]);
+        for (uint32_t id = 0; id < lstrip::kParamCount; ++id)
+            if (!lstrip::isOutput(id)) setParameterValue(lstrip::idToHost(id), v[id]);
         presetName_ = lstrip::kFactoryPresets[index].name;
     }
 
@@ -110,7 +115,7 @@ protected:
     void activate() override { chain_.reset(); reportLatency(); }
     void sampleRateChanged(double sr) override {
         chain_.prepare(sr);
-        for (uint32_t i = 0; i < lstrip::kNumInputParams; ++i) chain_.setParam(i, values_[i]);
+        for (uint32_t id = 0; id < lstrip::kParamCount; ++id) chain_.setParam(id, values_[id]);   // outputs are ignored
         reportLatency();
     }
 
@@ -135,7 +140,7 @@ protected:
         if (out[1] != in[1]) std::memcpy(out[1], in[1], sizeof(float) * frames);
         chain_.process(out[0], out[1], static_cast<int>(frames));
        #endif
-        for (uint32_t i = lstrip::kNumInputParams; i < lstrip::kParamCount; ++i) { values_[i] = chain_.output(i); shared_->set(i, values_[i]); }
+        for (uint32_t id = lstrip::kFirstOutput; id <= lstrip::kLastOutput; ++id) { values_[id] = chain_.output(id); shared_->set(id, values_[id]); }
     }
 
 private:

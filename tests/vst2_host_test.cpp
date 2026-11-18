@@ -53,8 +53,9 @@ static int g_fail = 0, g_pass = 0;
 
 static float norm(uint32_t id, float v) { return (v - kParams[id].min) / (kParams[id].max - kParams[id].min); } // linear (DPF maps by range)
 
+// `v` is indexed by L-STRIP id.  The host index is DPF's order (inputs first, outputs last): see idToHost().
 static void applyValues(AEffect* fx, const float* v) {
-    for (uint32_t i = 0; i < kNumInputParams; ++i) fx->setParameter(fx, static_cast<int>(i), norm(i, v[i]));
+    for (uint32_t h = 0; h < kNumInputs; ++h) { const uint32_t id = hostToId(h); fx->setParameter(fx, static_cast<int>(h), norm(id, v[id])); }
 }
 
 struct Plugin {
@@ -93,7 +94,7 @@ int main(int argc, char** argv) {
 
     std::printf("metadata\n");
     CHECK(fx->magic == 0x56737450, "magic 'VstP' (got 0x%x)", fx->magic);
-    CHECK(fx->numParams == static_cast<int>(kNumInputParams), "VST2 exposes only input params (%d vs %u); outputs stay internal", fx->numParams, kNumInputParams);
+    CHECK(fx->numParams == static_cast<int>(kNumInputs), "VST2 exposes every input and no output (%d vs %u)", fx->numParams, kNumInputs);
     CHECK(fx->numInputs == (mono ? 1 : 2) && fx->numOutputs == (mono ? 1 : 2), "%s in/out (%d/%d)", mono ? "mono" : "stereo", fx->numInputs, fx->numOutputs);
         CHECK((fx->flags & 1) != 0, "has editor");
     CHECK((fx->flags & 16) != 0, "supports processReplacing");
@@ -104,12 +105,16 @@ int main(int argc, char** argv) {
 
     std::printf("parameter mapping\n");
     // All inputs precede all outputs (VST2 requirement) and round-trip through normalised values.
-    for (uint32_t i = 0; i < kNumInputParams; ++i) {
+    for (uint32_t h = 0; h < kNumInputs; ++h) {
+        const uint32_t i = hostToId(h);
+        CHECK(!isOutput(i), "host index %u is an input", h);
         const float tgt = kParams[i].kind == Kind::Float ? 0.37f : norm(i, kParams[i].min + std::floor((kParams[i].max - kParams[i].min) * 0.5f));
-        fx->setParameter(fx, static_cast<int>(i), tgt);
-        const float back = fx->getParameter(fx, static_cast<int>(i));
+        fx->setParameter(fx, static_cast<int>(h), tgt);
+        const float back = fx->getParameter(fx, static_cast<int>(h));
         CHECK(std::fabs(back - tgt) < 1e-5f, "%s round trip %.4f -> %.4f", kParams[i].symbol, tgt, back);
     }
+    // v1.0 sessions index by position: every control that existed then keeps its index.
+    for (uint32_t i = 0; i < kMeterIn; ++i) CHECK(idToHost(i) == i && hostToId(i) == i, "v1.0 parameter %u keeps its host index", i);
     for (uint32_t i = 0; i < kParamCount; ++i) {
         char name[64] = {};
         fx->dispatcher(fx, effGetParamName, static_cast<int32_t>(i), 0, name, 0);
@@ -122,17 +127,17 @@ int main(int argc, char** argv) {
     if (fx->numPrograms > 1) {
         for (uint32_t k = 0; k < kNumFactoryPresets; ++k) {
             fx->dispatcher(fx, effSetProgram, 0, static_cast<intptr_t>(k), nullptr, 0);
-            float v[kNumInputParams]; presetToValues(kFactoryPresets[k], v);
-            for (uint32_t i = 0; i < kNumInputParams; ++i) CHECK(std::fabs(fx->getParameter(fx, static_cast<int>(i)) - norm(i, v[i])) < 1e-4f, "program %u param %s", k, kParams[i].symbol);
+            float v[kParamCount]; presetToValues(kFactoryPresets[k], v);
+            for (uint32_t h = 0; h < kNumInputs; ++h) { const uint32_t i = hostToId(h); CHECK(std::fabs(fx->getParameter(fx, static_cast<int>(h)) - norm(i, v[i])) < 1e-4f, "program %u param %s", k, kParams[i].symbol); }
         }
     } else std::printf("  (single program exposed by the VST2 wrapper: skipped)\n");
 
     std::printf("audio equals the reference chain (all presets, odd block sizes, in-place)\n");
     for (uint32_t k = 0; k < kNumFactoryPresets; ++k) {
-        float v[kNumInputParams]; presetToValues(kFactoryPresets[k], v);
+        float v[kParamCount]; presetToValues(kFactoryPresets[k], v);
         applyValues(fx, v);
         dsp::Chain ref; ref.prepare(SR);
-        for (uint32_t i = 0; i < kNumInputParams; ++i) ref.setParam(i, v[i]);
+        for (uint32_t i = 0; i < kParamCount; ++i) ref.setParam(i, v[i]);
         const std::vector<float> src = voice(180.0 + 7.0 * k, 24000, SR);
         std::vector<float> rl = src, rr = src, ol(src.size()), orr(src.size());
         ref.process(rl.data(), rr.data(), static_cast<int>(rl.size()));
@@ -158,7 +163,7 @@ int main(int argc, char** argv) {
     }
 
     std::printf("latency reporting\n");
-    { float v[kNumInputParams]; presetToValues(kFactoryPresets[0], v); applyValues(fx, v); }  // Podcast Clean: tune off
+    { float v[kParamCount]; presetToValues(kFactoryPresets[0], v); applyValues(fx, v); }  // Podcast Clean: tune off
     float in0[2][512] = {}, out0[2][512] = {};
     float* ip[2] = {in0[0], in0[1]}; float* op[2] = {out0[0], out0[1]};
     fx->processReplacing(fx, ip, op, 512);
@@ -171,7 +176,7 @@ int main(int argc, char** argv) {
     CHECK(fx->initialDelay == 0, "latency returns to 0 (got %d)", fx->initialDelay);
 
     std::printf("state chunk round trip\n");
-    { float v[kNumInputParams]; presetToValues(kFactoryPresets[3], v); applyValues(fx, v); }  // Stream Bright
+    { float v[kParamCount]; presetToValues(kFactoryPresets[3], v); applyValues(fx, v); }  // Stream Bright
     fx->setParameter(fx, static_cast<int>(kEqAir), 0.123f);
     void* chunk = nullptr;
     const intptr_t clen = fx->dispatcher(fx, effGetChunk, 0, 0, &chunk, 0);
@@ -182,9 +187,30 @@ int main(int argc, char** argv) {
         q.start(SR, BLOCK);
         q.fx->dispatcher(q.fx, effSetChunk, 0, static_cast<intptr_t>(saved.size()), saved.data(), 0);
         bool same = true;
-        for (uint32_t i = 0; i < kNumInputParams; ++i) if (std::fabs(q.fx->getParameter(q.fx, static_cast<int>(i)) - fx->getParameter(fx, static_cast<int>(i))) > 1e-5f) { same = false; std::printf("    mismatch %s\n", kParams[i].symbol); break; }
+        for (uint32_t h = 0; h < kNumInputs; ++h) if (std::fabs(q.fx->getParameter(q.fx, static_cast<int>(h)) - fx->getParameter(fx, static_cast<int>(h))) > 1e-5f) { same = false; std::printf("    mismatch %s\n", kParams[hostToId(h)].symbol); break; }
         CHECK(same, "chunk restores every parameter into a second instance");
         q.stop();
+    }
+
+    std::printf("a v1.0 session (chunk without any 1.1 parameter) loads with the 1.1 controls at their defaults\n");
+    {
+        // DPF's chunk: state "key\0value\0" pairs, one extra "\0", then "symbol\0value\0" pairs.  A v1.0 plugin wrote
+        // exactly the 62 original symbols; four of them are enough here.
+        std::string old;
+        auto add = [&](const char* k, const char* v) { old += k; old.push_back('\0'); old += v; old.push_back('\0'); };
+        add("preset", "Podcast Clean"); old.push_back('\0');
+        add("eq_air", "-4.5"); add("intensity", "55"); add("tune_on", "1"); add("comp_thresh", "-27");
+        Plugin q2;
+        if (q2.load(argv[1])) {
+            q2.start(SR, BLOCK);
+            q2.fx->dispatcher(q2.fx, effSetChunk, 0, static_cast<intptr_t>(old.size() + 1), const_cast<char*>(old.c_str()), 0);
+            auto val = [&](uint32_t id) { const float n = q2.fx->getParameter(q2.fx, static_cast<int>(idToHost(id))); return kParams[id].min + n * (kParams[id].max - kParams[id].min); };
+            CHECK(std::fabs(val(kEqAir) + 4.5f) < 1e-3f && std::fabs(val(kIntensity) - 55.f) < 1e-3f && val(kTuneOn) > 0.5f && std::fabs(val(kCompThresh) + 27.f) < 1e-3f,
+                  "the v1.0 values are restored (air %.2f, intensity %.1f)", val(kEqAir), val(kIntensity));
+            for (uint32_t id = kTuneTranspose; id < kParamCount; ++id)
+                CHECK(std::fabs(val(id) - kParams[id].def) < 1e-3f * (kParams[id].max - kParams[id].min), "%s stays at its default (%.2f)", kParams[id].symbol, val(id));
+            q2.stop();
+        }
     }
 
     std::printf("multiple instances are independent\n");

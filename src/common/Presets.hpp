@@ -80,6 +80,58 @@ inline constexpr PresetValue deessOnly[] = {
     {kEqOn, 0}, {kMbOn, 0}, {kSpaceOn, 0},
 };
 
+// ---- Added in 1.1.  They use the controls added in 1.1 and are appended after "Init" so existing program
+// indices stay where they were.
+inline constexpr PresetValue chatVoice[] = {
+    {kIntensity, 80}, {kGateThresh, -54}, {kOutSat, 8}, {kLevelAmount, 45}, {kPlosive, 45},
+    {kCompThresh, -20}, {kCompMakeup, 4.0f}, {kDeessAmount, 45},
+    {kEqLow, 1.5f}, {kEqMid, -1.5f}, {kEqHigh, 1.5f}, {kEqAir, 2.0f}, {kEqLowCut, 100},
+    {kMbDepth, 30}, {kReverbMix, 0},
+};
+inline constexpr PresetValue whisper[] = {
+    {kIntensity, 100}, {kGateThresh, -80}, {kLevelAmount, 65}, {kPlosive, 70},
+    {kCompThresh, -32}, {kCompMakeup, 6.0f}, {kCompMode, 1}, {kDeessAmount, 30}, {kDeessRange, 8},
+    {kEqLow, 0.0f}, {kEqMid, -1.0f}, {kEqHigh, 1.5f}, {kEqAir, 4.0f}, {kEqLowCut, 70},
+    {kMbDepth, 35}, {kMbUpward, 50}, {kReverbMix, 0},
+};
+inline constexpr PresetValue telephone[] = {
+    {kIntensity, 100}, {kGateThresh, -52}, {kOutSat, 45},
+    {kDynStyle, 2}, {kCompThresh, -26}, {kCompMakeup, 7.0f},
+    {kEqStyle, 1}, {kEqLow, -12.0f}, {kEqMid, 5.0f}, {kEqHigh, 0.0f}, {kEqAir, 0.0f},
+    {kEqLowCut, 300}, {kEqHighCut, 3400},
+    {kMbDepth, 25}, {kSpaceOn, 0},
+};
+inline constexpr PresetValue megaphone[] = {
+    {kIntensity, 100}, {kGateThresh, -50}, {kOutSat, 65},
+    {kDynStyle, 2}, {kCompThresh, -28}, {kCompMakeup, 9.0f},
+    {kEqStyle, 1}, {kEqLow, -6.0f}, {kEqMid, 6.0f}, {kEqHigh, 3.0f}, {kEqAir, -3.0f},
+    {kEqLowCut, 280}, {kEqHighCut, 5200},
+    {kMbStyle, 2}, {kMbDepth, 50},
+    {kSpaceType, 0}, {kReverbMix, 12}, {kReverbLowCut, 250}, {kReverbHighCut, 4500},
+    {kDelayMix, 10}, {kDelayTime, 2}, {kDelayFeedback, 30}, {kDelayTone, 3000},
+};
+inline constexpr PresetValue smallRoom[] = {
+    {kIntensity, 100}, {kGateThresh, -58},
+    {kSpaceType, 0}, {kReverbMix, 42}, {kReverbDuck, -2}, {kReverbLowCut, 160}, {kReverbHighCut, 11000},
+};
+inline constexpr PresetValue cavern[] = {
+    {kIntensity, 100}, {kGateThresh, -58},
+    {kSpaceType, 1}, {kReverbMix, 40}, {kReverbDuck, -4}, {kReverbPreDelay, 35}, {kReverbLowCut, 130}, {kReverbHighCut, 3800},
+    {kDelayMix, 38}, {kDelayTime, 5}, {kDelayFeedback, 68}, {kDelayTone, 2200}, {kDelayDuck, -4},
+    {kEqLowCut, 130}, {kEqAir, -1.0f},
+};
+inline constexpr PresetValue helium[] = {
+    {kIntensity, 100}, {kGateThresh, -56}, {kOutSat, 5},
+    {kTuneOn, 1}, {kTuneAmount, 0}, {kTuneTranspose, 8}, {kTuneMix, 100},
+    {kEqLowCut, 120}, {kEqAir, 4.0f}, {kReverbMix, 8},
+};
+inline constexpr PresetValue giant[] = {
+    {kIntensity, 100}, {kGateThresh, -56}, {kOutSat, 35},
+    {kTuneOn, 1}, {kTuneAmount, 0}, {kTuneTranspose, -8}, {kTuneMix, 100},
+    {kEqLow, 4.0f}, {kEqHigh, -1.0f}, {kEqAir, -3.0f},
+    {kMbStyle, 1}, {kMbDepth, 40}, {kSpaceType, 1}, {kReverbMix, 20},
+};
+
 #define LS_PRESET(n, cat, arr) {n, cat, arr, static_cast<uint32_t>(sizeof(arr) / sizeof(arr[0]))}
 } // namespace presets
 
@@ -95,12 +147,21 @@ inline constexpr FactoryPreset kFactoryPresets[] = {
     LS_PRESET("Robot Voice", "Tune", presets::robotVoice),
     LS_PRESET("De-ess Only", "Utility", presets::deessOnly),
     LS_PRESET("Init", "Utility", presets::init),
+    // Added in 1.1
+    LS_PRESET("Chat Voice", "Stream", presets::chatVoice),
+    LS_PRESET("Whisper", "Podcast", presets::whisper),
+    LS_PRESET("Telephone", "Stream", presets::telephone),
+    LS_PRESET("Megaphone", "Stream", presets::megaphone),
+    LS_PRESET("Small Room", "Music", presets::smallRoom),
+    LS_PRESET("Cavern", "Music", presets::cavern),
+    LS_PRESET("Helium", "Tune", presets::helium),
+    LS_PRESET("Giant", "Tune", presets::giant),
 };
 inline constexpr uint32_t kNumFactoryPresets = sizeof(kFactoryPresets) / sizeof(kFactoryPresets[0]);
 
-// Fill `values` (kNumInputParams floats) with defaults + the preset's overrides.
+// Fill `values` (kParamCount floats, indexed by id) with defaults + the preset's overrides.
 inline void presetToValues(const FactoryPreset& p, float* values) {
-    for (uint32_t i = 0; i < kNumInputParams; ++i) values[i] = kParams[i].def;
+    for (uint32_t i = 0; i < kParamCount; ++i) values[i] = kParams[i].def;
     for (uint32_t i = 0; i < p.count; ++i) values[p.values[i].id] = p.values[i].value;
 }
 

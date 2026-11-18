@@ -38,6 +38,13 @@ After updating DPF
 4. Check ``vendor/dpf/LICENSING.md`` for changes and update
    ``THIRD-PARTY.rst`` at the repository root.
 
+DPF's VST2 wrapper counts parameters only up to the first output and asserts
+that "parameter outputs must be all at the end" (``DistrhoPluginVST2.cpp``).
+L-STRIP relies on that being so: it presents the controls first and the
+meters last through ``idToHost`` (see ``design.rst``).  If an update changes
+the rule, the VST2 harness ("every input parameter and no meter is visible")
+fails.
+
 Licensing of the plugin formats
 ===============================
 

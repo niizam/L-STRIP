@@ -273,6 +273,81 @@ struct TuneOverlay : Overlay {
     void key(UiBase&, unsigned k, bool press) override { if (press && k == 27 && onClose) onClose(); }
 };
 
+// ================================================================= "More" controls overlay
+// The controls added in 1.1.  They live in one panel so the main window keeps its layout.
+struct MoreOverlay : Overlay {
+    float cx0 = 150, cy0 = 84, cw = 640, ch = 480;
+    float waitX = 0, waitY = 0;
+
+    // Parameters that are not at their default, for the button highlight.
+    static bool anyActive(const UiBase& u) {
+        static const uint32_t ids[] = {kLevelAmount, kPlosive, kTuneTranspose, kTuneAmount, kEqHighCut,
+                                       kDelayFeedback, kDelayTone, kReverbPreDelay, kReverbLowCut, kReverbHighCut};
+        for (uint32_t id : ids) if (std::fabs(u.get(id) - kParams[id].def) > 1e-4f) return true;
+        return false;
+    }
+
+    MoreOverlay() {
+        x = 0; y = 0; w = kW; h = kH;
+        const float lx = cx0 + 30.f, rx = cx0 + 340.f, cwid = 270.f;
+        auto head = [&](float px, float py, const char* t) {
+            kids.emplace_back(new Label(px, py, t, 10.f, false, UiBase::ALIGN_LEFT | UiBase::ALIGN_MIDDLE, true, 1.6f));
+            kids.emplace_back(new Divider(px, py + 12.f, cwid));
+        };
+        auto row = [&](uint32_t id, float px, float py, const char* label, bool bipolar = false) {
+            kids.emplace_back(new Label(px, py, label, 9.f, true, UiBase::ALIGN_LEFT | UiBase::ALIGN_MIDDLE));
+            kids.emplace_back(new ValueText(id, px + cwid, py, 11.5f, UiBase::ALIGN_RIGHT | UiBase::ALIGN_MIDDLE));
+            kids.emplace_back(new HSlider(id, px + 4.f, cwid - 8.f, py + 20.f, bipolar));
+        };
+        const float y0 = cy0 + 86.f;
+        head(lx, y0, "VOICE");
+        row(kLevelAmount, lx, y0 + 34.f, "AUTO LEVEL");
+        row(kPlosive, lx, y0 + 80.f, "PLOSIVE TAMER");
+        head(lx, y0 + 134.f, "PITCH SHIFT");
+        kids.emplace_back(new ParamToggle(kTuneOn, lx, y0 + 156.f, 108.f, 26.f, "PITCH ON"));
+        kids.emplace_back(new Stepper(kTuneTranspose, lx + cwid - 70.f, y0 + 169.f, 140.f, 1.f));
+        row(kTuneAmount, lx, y0 + 204.f, "CORRECTION");
+        head(rx, y0, "TONE");
+        row(kEqHighCut, rx, y0 + 34.f, "EQ HIGH-CUT");
+        head(rx, y0 + 88.f, "DELAY");
+        row(kDelayFeedback, rx, y0 + 122.f, "FEEDBACK");
+        row(kDelayTone, rx, y0 + 168.f, "TONE");
+        head(rx, y0 + 222.f, "REVERB");
+        row(kReverbPreDelay, rx, y0 + 256.f, "PRE-DELAY");
+        row(kReverbLowCut, rx, y0 + 302.f, "LOW-CUT");
+        row(kReverbHighCut, rx, y0 + 348.f, "HIGH-CUT");
+        waitY = y0 + 252.f; waitX = lx;
+    }
+
+    struct Divider : Control {
+        Divider(float px, float py, float pw) { x = px; y = py; w = pw; h = 1; }
+        bool hit(float, float) const override { return false; }
+        void draw(UiBase& u) override { u.fillRR(x, y, w, 1.f, 0.5f, u.th.panelEdge); }
+    };
+
+    void draw(UiBase& u) override {
+        dim(u); card(u, cx0, cy0, cw, ch);
+        u.txt(cx0 + 30.f, cy0 + 38.f, "More controls", 17.f, u.th.text, UiBase::ALIGN_LEFT | UiBase::ALIGN_MIDDLE, UiBase::Bold);
+        u.txt(cx0 + 30.f, cy0 + 62.f, "Everything here starts switched off.  Double-click a control to reset it.", 10.5f, u.th.textFaint, UiBase::ALIGN_LEFT | UiBase::ALIGN_MIDDLE);
+        const float qx = cx0 + cw - 34.f, qy = cy0 + 38.f;
+        u.dot(qx, qy, 16.f, u.th.field);
+        u.line(qx - 4.5f, qy - 4.5f, qx + 4.5f, qy + 4.5f, u.th.textDim, 1.6f); u.line(qx + 4.5f, qy - 4.5f, qx - 4.5f, qy + 4.5f, u.th.textDim, 1.6f);
+        for (auto& k : kids) k->draw(u);
+        // Transpose needs pitch correction; say so when it is off and a shift is set.
+        if (u.get(kTuneOn) < 0.5f && u.get(kTuneTranspose) != 0.f)
+            u.txt(waitX, waitY, "Pitch shift is waiting for PITCH ON", 10.f, u.th.warn, UiBase::ALIGN_LEFT | UiBase::ALIGN_MIDDLE);
+    }
+    bool press(UiBase& u, float px, float py, int b, bool ctrl, bool dbl) override {
+        if (b != 1) return true;
+        if (std::hypot(px - (cx0 + cw - 34.f), py - (cy0 + 38.f)) < 16.f) { if (onClose) onClose(); return false; }
+        if (px < cx0 || px > cx0 + cw || py < cy0 || py > cy0 + ch) { if (onClose) onClose(); return false; }
+        if (Control* k = kidAt(px, py)) if (k->press(u, px, py, b, ctrl, dbl)) { captured = k; return true; }
+        return captured != nullptr;
+    }
+    void motion(UiBase& u) { Control* k = kidAt(u.mx, u.my); u.hover = k ? k : this; }
+    void key(UiBase&, unsigned k, bool press) override { if (press && k == 27 && onClose) onClose(); }
+};
+
 // ================================================================= Text prompt overlay
 struct PromptOverlay : Overlay {
     std::string title, value; std::function<void(const std::string&)> onOk; bool selectAll = true;

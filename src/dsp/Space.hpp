@@ -15,7 +15,14 @@ struct SpaceSettings {
     float chorusRate = 0.8f, chorusMix = 0;
     int voices = 2;
     double bpm = 120.0;
+    float delayFeedback = 0.4f;     // fraction of each echo fed back
+    float delayToneHz = 4500.f;     // low-pass in the feedback path
+    float reverbPreDelayMs = 0.f;   // added to the reverb type's own
+    float reverbLowCutHz = 20.f;    // <= kRvLowCutOff means off
+    float reverbHighCutHz = 20000.f;// >= kRvHighCutOff means off
 };
+
+inline constexpr float kRvLowCutOff = 21.f, kRvHighCutOff = 19900.f;
 
 class Space {
 public:
@@ -26,7 +33,6 @@ public:
         for (auto& c : chorus_) c.prepare(static_cast<size_t>(0.06 * sr));
         env_.setTimes(0.002f, 0.150f, sr);
         duckAtt_ = timeCoef(0.004f, sr); duckRel_ = timeCoef(0.180f, sr);
-        fbLpC_ = static_cast<float>(1.0 - std::exp(-2.0 * kPi * 4500.0 / sr));
         fbHpC_ = static_cast<float>(1.0 - std::exp(-2.0 * kPi * 150.0 / sr));
         reset();
         set(SpaceSettings{});
@@ -35,6 +41,8 @@ public:
         reverb_.reset();
         for (auto& d : delay_) d.clear();
         for (auto& c : chorus_) c.clear();
+        for (auto& b : rvHp_) b.reset();
+        for (auto& b : rvLp_) b.reset();
         env_.env = 0; rvDuck_ = dlDuck_ = 0; lpS_[0] = lpS_[1] = hpS_[0] = hpS_[1] = 0;
         lfoPhase_ = 0; delaySamples_ = delayTarget_; // snap: no echo-time sweep after a reset
     }
@@ -42,6 +50,13 @@ public:
         if (s.type != s_.type || first_) reverb_.setType(s.type);
         first_ = false;
         s_ = s;
+        reverb_.setExtraPreDelayMs(s.reverbPreDelayMs);
+        fbLpC_ = static_cast<float>(1.0 - std::exp(-2.0 * kPi * static_cast<double>(s.delayToneHz) / sr_));
+        const bool lo = s.reverbLowCutHz > kRvLowCutOff, hi = s.reverbHighCutHz < kRvHighCutOff;
+        if (lo) for (auto& b : rvHp_) b.set(BiquadCoef::highpass(s.reverbLowCutHz, 0.707, sr_));
+        if (hi) for (auto& b : rvLp_) b.set(BiquadCoef::lowpass(s.reverbHighCutHz, 0.707, sr_));
+        if ((lo && !rvLoOn_) || (hi && !rvHiOn_)) { for (auto& b : rvHp_) b.reset(); for (auto& b : rvLp_) b.reset(); }
+        rvLoOn_ = lo; rvHiOn_ = hi;
         const double bpm = std::min(std::max(s.bpm, 40.0), 300.0);
         const int idx = std::min(std::max(s.delayIdx, 0), 9);
         delayTarget_ = static_cast<float>(60.0 / bpm * kDelayTimeBeats[idx] * sr_);
@@ -59,6 +74,7 @@ public:
         const float lfoInc = static_cast<float>(s_.chorusRate / sr_);
         const float cmix = s_.chorusMix;
         const float rvMax = s_.reverbMix, dlMax = s_.delayMix;
+        const float fbAmt = s_.delayFeedback;
         const float rvDuckMax = -s_.reverbDuckDb, dlDuckMax = -s_.delayDuckDb;
         float rvPk = 0.f, dlPk = 0.f, rvGr = 0.f, dlGr = 0.f;
         for (int i = 0; i < n; ++i) {
@@ -96,6 +112,8 @@ public:
             if (rvMax > 0.001f) {
                 float wl, wr;
                 reverb_.process((m0 + m1) * 0.5f, wl, wr);
+                if (rvLoOn_) { wl = rvHp_[0].process(wl); wr = rvHp_[1].process(wr); }
+                if (rvHiOn_) { wl = rvLp_[0].process(wl); wr = rvLp_[1].process(wr); }
                 const float g = rvMax * dbToLin(-rvDuck_);
                 o0 += wl * g; o1 += wr * g;
                 rvPk = std::max(rvPk, std::max(std::fabs(wl), std::fabs(wr)) * g);
@@ -104,7 +122,7 @@ public:
             delaySamples_ += (delayTarget_ - delaySamples_) * 0.0005f;
             const float dA = delay_[0].read(delaySamples_), dB = delay_[1].read(delaySamples_);
             const float in = (m0 + m1) * 0.5f;
-            const float fb0 = filterFb(0, dB * 0.4f), fb1 = filterFb(1, dA * 0.4f);
+            const float fb0 = filterFb(0, dB * fbAmt), fb1 = filterFb(1, dA * fbAmt);
             delay_[0].push(in + fb0); delay_[1].push(fb1);
             if (dlMax > 0.001f) {
                 const float g = dlMax * dbToLin(-dlDuck_);
@@ -131,6 +149,8 @@ private:
     EnvFollower env_;
     float duckAtt_ = 0, duckRel_ = 0, rvDuck_ = 0, dlDuck_ = 0;
     float fbLpC_ = 0, fbHpC_ = 0, lpS_[2] = {}, hpS_[2] = {};
+    Biquad rvHp_[2], rvLp_[2];
+    bool rvLoOn_ = false, rvHiOn_ = false;
     float lfoPhase_ = 0, delaySamples_ = 0, delayTarget_ = 0;
     bool delayInit_ = false;
     float rvSendDb_ = -80, dlSendDb_ = -80, rvGrDb_ = 0, dlGrDb_ = 0;

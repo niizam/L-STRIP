@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
 
@@ -68,7 +69,9 @@ static void testParamTable() {
         CHECK(d.def >= d.min && d.def <= d.max, "param %s default in range", d.symbol);
         CHECK(d.min < d.max, "param %s range", d.symbol);
         for (uint32_t j = i + 1; j < kParamCount; ++j) CHECK(std::strcmp(d.symbol, kParams[j].symbol) != 0, "dup symbol %s", d.symbol);
-        CHECK(isOutput(i) == (i >= kNumInputParams), "outputs are last: %s", d.symbol);
+        CHECK(isOutput(i) == (i >= kFirstOutput && i <= kLastOutput), "outputs are one contiguous block: %s", d.symbol);
+        CHECK(hostToId(idToHost(i)) == i && idToHost(hostToId(i)) == i, "host index mapping round-trips: %s", d.symbol);
+        CHECK(isOutput(i) == (idToHost(i) >= kNumInputs), "host order puts every output last: %s", d.symbol);
     }
     // C major = C D E F G A B -> bits 0,2,4,5,7,9,11
     CHECK(scaleMask(0, 0, nullptr) == ((1u<<0)|(1u<<2)|(1u<<4)|(1u<<5)|(1u<<7)|(1u<<9)|(1u<<11)), "C major mask");
@@ -287,8 +290,8 @@ static void testConcurrentParams() {
     std::thread gui([&] {
         std::mt19937 g(5); std::uniform_real_distribution<float> u(0, 1);
         while (!stop.load()) {
-            for (uint32_t i = 0; i < kNumInputParams; ++i) {   // like a preset apply: every parameter, back to back
-                if (i == kMasterOn) continue;
+            for (uint32_t i = 0; i < kParamCount; ++i) {   // like a preset apply: every parameter, back to back
+                if (i == kMasterOn || isOutput(i)) continue;
                 c.setParam(i, kParams[i].min + u(g) * (kParams[i].max - kParams[i].min));
             }
         }
@@ -306,6 +309,7 @@ static void testConcurrentParams() {
     setAllOff(c); c.setParam(kEqOn, 1);
     for (uint32_t id : {kEqLow, kEqMid, kEqHigh}) c.setParam(id, 0);
     c.setParam(kEqLowCut, 20); c.setParam(kEqStyle, 0);   // the writer randomised the style too
+    for (uint32_t id : {kEqHighCut, kLevelAmount, kPlosive}) c.setParam(id, kParams[id].def);   // ...and the 1.1 controls that colour the level
     auto sine = [](size_t n) { std::vector<float> x(n); for (size_t i = 0; i < n; ++i) x[i] = 0.2f * std::sin(2 * kPi * 12000.0 * i / SR); return x; };
     auto level = [&](float airDb) {
         c.setParam(kEqAir, airDb);                        // edit made right before the block is processed
@@ -347,8 +351,8 @@ static void testFuzz() {
     auto src = voice(180, 4800, 0.5f);
     bool fin = true; float pk = 0;
     for (int iter = 0; iter < 300; ++iter) {
-        for (uint32_t i = 0; i < kNumInputParams; ++i) {
-            if (i == kMasterOn) continue;
+        for (uint32_t i = 0; i < kParamCount; ++i) {
+            if (i == kMasterOn || isOutput(i)) continue;
             if (u(g) < 0.15f) c.setParam(i, kParams[i].min + u(g) * (kParams[i].max - kParams[i].min));
         }
         std::vector<float> l = src, r = src;
@@ -361,13 +365,229 @@ static void testFuzz() {
     CHECK(pk <= dbToLin(-1.f) + 1e-3f || c.param(kMasterOn) < 0.5f, "limiter is last: peak %.3f", pk);
 }
 
+// ======================================================================= features added in 1.1
+
+// Level of the band below 90 Hz in [a, b), in dB.
+static float lowBandDb(const std::vector<float>& x, size_t a, size_t b) {
+    Biquad f; f.set(BiquadCoef::lowpass(90.0, 0.707, SR));
+    double e = 0;
+    for (size_t i = 0; i < b; ++i) { const float y = f.process(x[i]); if (i >= a) e += y * y; }
+    return linToDb(static_cast<float>(std::sqrt(e / (b - a))));
+}
+template <class Fn>
+static void runInBlocks(Fn&& fn, std::vector<float>& l, std::vector<float>& r) {
+    for (size_t pos = 0; pos < l.size(); pos += 480) fn(l.data() + pos, r.data() + pos, static_cast<int>(std::min<size_t>(480, l.size() - pos)));
+}
+static bool sameBits(const std::vector<float>& a, const std::vector<float>& b) {
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+}
+
+static void testNewParamsNeutral() {
+    std::printf("1.1 parameters default to no effect\n");
+    CHECK(kParams[kTuneTranspose].def == 0 && kParams[kTuneAmount].def == 100 && kParams[kPlosive].def == 0 && kParams[kLevelAmount].def == 0,
+          "tune/plosive/level defaults");
+    CHECK(kParams[kEqHighCut].def == kParams[kEqHighCut].max && kParams[kReverbHighCut].def == kParams[kReverbHighCut].max
+          && kParams[kReverbLowCut].def == kParams[kReverbLowCut].min, "cut filters default to off");
+    CHECK(kParams[kDelayFeedback].def == 40 && kParams[kDelayTone].def == 4500 && kParams[kReverbPreDelay].def == 0, "space extras default to the 1.0 sound");
+    for (uint32_t i = kTuneTranspose; i < kParamCount; ++i) CHECK(i > kLastOutput && !isOutput(i), "%s is an input after the outputs", kParams[i].symbol);
+    // The off positions are exact bypasses: not a single sample changes.
+    auto x = voice(120, 20000, 0.3f), a = x, b = x;
+    PlosiveTamer p; p.prepare(SR); p.set(0.f); runInBlocks([&](float* l, float* r, int n) { p.process(l, r, n); }, a, b);
+    CHECK(sameBits(a, x) && sameBits(b, x), "plosive tamer at 0 %% is bit-exact");
+    Leveler lv; lv.prepare(SR); lv.set(0.f); a = x; b = x; runInBlocks([&](float* l, float* r, int n) { lv.process(l, r, n); }, a, b);
+    CHECK(sameBits(a, x) && sameBits(b, x), "auto level at 0 %% is bit-exact");
+    // A 1.0 preset (no 1.1 values) must load with the 1.1 parameters at their defaults.
+    float v[kParamCount]; presetToValues(kFactoryPresets[0], v);
+    CHECK(v[kPlosive] == 0 && v[kLevelAmount] == 0 && v[kTuneTranspose] == 0 && v[kTuneAmount] == 100 && v[kEqHighCut] == 20000, "old preset leaves new controls neutral");
+}
+
+static void testTranspose() {
+    std::printf("tune: transpose and correction amount\n");
+    auto run = [&](double f0, int st, float amount, std::vector<float>& out) {
+        Chain c; c.prepare(SR); setAllOff(c);
+        c.setParam(kTuneOn, 1); c.setParam(kTuneScale, 2); c.setParam(kTuneAmount, amount); c.setParam(kTuneTranspose, static_cast<float>(st));
+        c.setParam(kTuneSpeed, 10); c.setParam(kTuneHumanize, 0);
+        out = voice(f0, 96000, 0.3f); auto r = out; runChain(c, out, r);
+    };
+    std::vector<float> o;
+    for (double f0 : {130.0, 200.0})
+        for (int st : {-12, -5, 0, 7, 12}) {
+            run(f0, st, 0.f, o);
+            const double want = f0 * std::pow(2.0, st / 12.0);
+            const double got = measureHz(o, 60000, 90000, want * 0.8, want * 1.25);
+            CHECK(std::fabs(cents(got, want)) < 10.0, "%.0f Hz %+d st -> %.1f Hz (want %.1f, %.1f ct off)", f0, st, got, want, cents(got, want));
+            CHECK(std::fabs(rmsDb(o, 60000, 90000) - rmsDb(voice(f0, 96000, 0.3f), 60000, 90000)) < 1.5f, "level preserved at %+d st", st);
+        }
+    // Correction amount: a 5 % flat 200 Hz note is pulled to the nearest semitone at 100 %, left alone at 0 %.
+    const double flat = 196.0 * std::pow(2.0, -35.0 / 1200.0);   // G3, 35 cents flat
+    run(flat, 0, 100.f, o); const double full = measureHz(o, 60000, 90000, 150, 260);
+    run(flat, 0, 0.f, o);   const double none = measureHz(o, 60000, 90000, 150, 260);
+    CHECK(std::fabs(cents(full, 196.0)) < 10.0 && std::fabs(cents(none, 196.0)) > 25.0, "amount 100%% corrects (%.1f Hz), 0%% does not (%.1f Hz)", full, none);
+    CHECK(std::fabs(cents(none, flat)) < 5.0, "amount 0%% keeps the original pitch (%.1f Hz vs %.1f)", none, flat);
+    // Breaths and consonants move with the voice instead of snapping back to the original pitch.
+    std::mt19937 g(3); std::uniform_real_distribution<float> u(-1, 1);
+    std::vector<float> noise(48000); for (auto& v : noise) v = u(g) * 0.1f;
+    auto rel = [&](int st) {
+        Chain c; c.prepare(SR); setAllOff(c); c.setParam(kTuneOn, 1); c.setParam(kTuneAmount, 0); c.setParam(kTuneTranspose, static_cast<float>(st));
+        auto l = noise, r = noise; runChain(c, l, r);
+        double e = 0, ref = 0; const int lat = c.latency();
+        for (size_t i = 20000; i < 46000; ++i) { const double d = l[i] - noise[i - lat]; e += d * d; ref += static_cast<double>(noise[i - lat]) * noise[i - lat]; }
+        return 10 * std::log10(e / ref + 1e-20);
+    };
+    CHECK(rel(0) < -60.0, "unvoiced sound passes straight through when not transposing: %.1f dB", rel(0));
+    CHECK(rel(5) > -6.0 && rel(-5) > -6.0, "unvoiced sound is shifted too when transposing: %.1f / %.1f dB", rel(5), rel(-5));
+    // Latency stays 10 ms however far it is shifted.
+    { Chain c; c.prepare(SR); setAllOff(c); c.setParam(kTuneOn, 1); c.setParam(kTuneTranspose, 12);
+      CHECK(c.latency() == static_cast<int>(std::lround(0.010 * SR)), "latency unchanged by transpose: %d", c.latency()); }
+}
+
+static void testPlosive() {
+    std::printf("plosive tamer\n");
+    // A pop: a 60 ms burst at 50 Hz under a quiet voice.
+    auto withPop = [&](float voiceAmp) {
+        auto x = voice(180, 48000, voiceAmp); const size_t s = 20000, n = static_cast<size_t>(0.060 * SR);
+        for (size_t i = 0; i < n; ++i) x[s + i] += 0.5f * std::sin(static_cast<float>(kPi) * i / n) * std::sin(2.f * static_cast<float>(kPi) * 50.f * i / static_cast<float>(SR));
+        return x;
+    };
+    for (float amount : {0.6f, 1.0f}) {
+        auto x = withPop(0.05f), a = x, b = x;
+        PlosiveTamer p; p.prepare(SR); p.set(amount); runInBlocks([&](float* l, float* r, int n) { p.process(l, r, n); }, a, b);
+        const float before = lowBandDb(x, 20000, 22880), after = lowBandDb(a, 20000, 22880);
+        CHECK(after < before - (amount > 0.9f ? 8.f : 5.f), "amount %.0f%%: pop lows reduced %.1f dB", amount * 100, before - after);
+        CHECK(std::fabs(rmsDb(a, 30000, 48000) - rmsDb(x, 30000, 48000)) < 0.2f, "voice after the pop untouched (%.2f dB)", rmsDb(a, 30000, 48000) - rmsDb(x, 30000, 48000));
+    }
+    // Low sung notes are left alone even at 100 %.
+    for (double f0 : {70.0, 85.0, 110.0, 160.0}) {
+        auto x = voice(f0, 48000, 0.3f), a = x, b = x;
+        PlosiveTamer p; p.prepare(SR); p.set(1.f); runInBlocks([&](float* l, float* r, int n) { p.process(l, r, n); }, a, b);
+        CHECK(std::fabs(rmsDb(a, 12000, 48000) - rmsDb(x, 12000, 48000)) < 0.5f, "%.0f Hz sung note changes by %.2f dB", f0, rmsDb(a, 12000, 48000) - rmsDb(x, 12000, 48000));
+    }
+    // Switching it off glides: no click.
+    { PlosiveTamer p; p.prepare(SR); p.set(1.f); auto x = withPop(0.05f), a = x, b = x; runInBlocks([&](float* l, float* r, int n) { p.process(l, r, n); }, a, b);
+      p.set(0.f); const auto y0 = voice(180, 9600, 0.2f); auto y = y0, z = y0;
+      p.process(y.data(), z.data(), static_cast<int>(y.size()));
+      float jump = 0; for (size_t i = 1; i < y.size(); ++i) jump = std::max(jump, std::fabs((y[i] - y[i - 1]) - (y0[i] - y0[i - 1])));
+      CHECK(jump < 0.02f, "no click when switched off (largest step difference %.4f)", jump); }
+}
+
+static void testLeveler() {
+    std::printf("auto level\n");
+    // 3 s quiet then 3 s loud.
+    std::vector<float> x = voice(180, 144000, 0.02f); { auto loud = voice(180, 144000, 0.35f); x.insert(x.end(), loud.begin(), loud.end()); }
+    const float inGap = rmsDb(x, 240000, 288000) - rmsDb(x, 96000, 144000);
+    for (float amount : {0.5f, 1.0f}) {
+        auto a = x, b = x; Leveler lv; lv.prepare(SR); lv.set(amount); runInBlocks([&](float* l, float* r, int n) { lv.process(l, r, n); }, a, b);
+        const float gap = rmsDb(a, 240000, 288000) - rmsDb(a, 96000, 144000);
+        CHECK(gap < inGap * (1.f - 0.4f * amount) , "amount %.0f%%: level gap %.1f dB -> %.1f dB", amount * 100, inGap, gap);
+        CHECK(std::fabs(lv.gainDb()) <= Leveler::kMaxRideDb * amount + 0.01f, "ride limited to %.0f dB (now %.2f)", Leveler::kMaxRideDb * amount, lv.gainDb());
+    }
+    // No swell when the voice arrives: after silence (or after the amount is raised from 0) a voice that is
+    // already at the target must leave the gain near 0 dB, and a louder one must never be lifted first.
+    for (float levelDb : {-35.f, -20.f, -10.f}) {
+        auto v = voice(180, 96000, 1.f); const float cur = rmsDb(v, 0, v.size());
+        for (auto& t : v) t *= dbToLin(levelDb - cur);
+        std::vector<float> x(48000, 0.f); x.insert(x.end(), v.begin(), v.end());
+        auto b = x; Leveler lv; lv.prepare(SR); lv.set(1.f);
+        float lo = 99.f, hi = -99.f;
+        for (size_t pos = 0; pos + 16 <= x.size(); pos += 16) { lv.process(x.data() + pos, b.data() + pos, 16); if (pos >= 48000) { lo = std::min(lo, lv.gainDb()); hi = std::max(hi, lv.gainDb()); } }
+        const float ideal = std::max(-Leveler::kMaxRideDb, std::min(Leveler::kMaxRideDb, Leveler::kTargetDb - levelDb));
+        if (levelDb == -20.f) CHECK(lo > -0.5f && hi < 0.5f, "voice on target after silence: gain stays within +/-0.5 dB (%.2f .. %.2f)", lo, hi);
+        else if (levelDb > -20.f) CHECK(hi < 0.2f && lo > ideal - 0.5f, "loud voice after silence is only ever eased (%.2f .. %.2f, ideal %.1f)", lo, hi, ideal);
+        else CHECK(lo > -0.2f && hi <= ideal + 0.2f, "quiet voice after silence is lifted without overshoot (%.2f .. %.2f, ideal %.1f)", lo, hi, ideal);
+    }
+    // It holds still in pauses: loud phrase, then 3 s of room noise at -65 dBFS: gain must not creep up.
+    { auto a = voice(180, 96000, 0.35f); std::mt19937 g(9); std::uniform_real_distribution<float> u(-1, 1);
+      for (int i = 0; i < 144000; ++i) a.push_back(u(g) * 0.0006f);
+      auto b = a; Leveler lv; lv.prepare(SR); lv.set(1.f);
+      for (size_t pos = 0; pos < 96000; pos += 480) lv.process(a.data() + pos, b.data() + pos, 480);
+      const float atPause = lv.gainDb();
+      for (size_t pos = 96000; pos < a.size(); pos += 480) lv.process(a.data() + pos, b.data() + pos, 480);
+      CHECK(atPause < -3.f, "loud phrase is eased (%.2f dB)", atPause);
+      CHECK(std::fabs(lv.gainDb() - atPause) < 0.5f, "gain held through a pause: %.2f dB -> %.2f dB", atPause, lv.gainDb()); }
+    // Switching it off while it is applying gain glides back to unity.
+    { auto a = voice(180, 96000, 0.02f), b = a; Leveler lv; lv.prepare(SR); lv.set(1.f); runInBlocks([&](float* l, float* r, int n) { lv.process(l, r, n); }, a, b);
+      const float was = lv.gainDb(); lv.set(0.f); auto y = voice(180, 48000, 0.02f), z = y;
+      runInBlocks([&](float* l, float* r, int n) { lv.process(l, r, n); }, y, z);
+      CHECK(was > 3.f && lv.gainDb() == 0.f, "boost %.1f dB then off -> %.3f dB", was, lv.gainDb());
+      // Glide, not a jump: sample the gain every 16 samples while it returns to unity.
+      Leveler lv2; lv2.prepare(SR); lv2.set(1.f); { auto q = voice(180, 96000, 0.02f), w = q; runInBlocks([&](float* l, float* r, int n) { lv2.process(l, r, n); }, q, w); }
+      lv2.set(0.f); float prevG = lv2.gainDb(), worst = 0; auto q = voice(180, 48000, 0.02f), w = q;
+      for (size_t pos = 0; pos + 16 <= q.size(); pos += 16) { lv2.process(q.data() + pos, w.data() + pos, 16); worst = std::max(worst, std::fabs(lv2.gainDb() - prevG)); prevG = lv2.gainDb(); }
+      CHECK(worst < 0.1f, "gain glides back to unity (largest step %.3f dB per 16 samples)", worst); }
+}
+
+static void testSpaceExtras() {
+    std::printf("space extras: delay feedback/tone, reverb pre-delay and cuts, EQ high-cut\n");
+    const int N = 4 * 48000;
+    auto burst = [&] { std::vector<float> l(N, 0.f); for (int i = 0; i < 480; ++i) l[i] = 0.5f * std::sin(2 * kPi * 500 * i / SR); return l; };
+    auto energy = [&](const std::vector<float>& x, double t0, double t1) { double e = 0; for (size_t i = static_cast<size_t>(t0 * SR); i < static_cast<size_t>(t1 * SR) && i < x.size(); ++i) e += x[i] * x[i]; return 10 * std::log10(e + 1e-20); };
+    // Delay: 1/4 note at 120 bpm = 0.5 s.  Feedback 0 leaves one echo, 85 keeps repeating.
+    auto delayRun = [&](float fb, float tone) {
+        Chain c; c.prepare(SR); setAllOff(c); c.setTempo(120); c.setParam(kSpaceOn, 1); c.setParam(kReverbMix, 0); c.setParam(kDelayMix, 100);
+        c.setParam(kDelayTime, 5); c.setParam(kDelayDuck, 0); c.setParam(kDelayFeedback, fb); c.setParam(kDelayTone, tone);
+        auto l = burst(), r = l; runChain(c, l, r); return l;
+    };
+    { const auto none = delayRun(0.f, 4500.f), lots = delayRun(85.f, 4500.f);
+      CHECK(energy(none, 0.45, 0.65) > -45.0, "first echo present: %.1f dB", energy(none, 0.45, 0.65));
+      CHECK(energy(none, 1.45, 3.9) < energy(none, 0.45, 0.65) - 30.0, "feedback 0 gives no repeats");
+      CHECK(energy(lots, 1.45, 3.9) > energy(none, 1.45, 3.9) + 20.0, "feedback 85%% keeps repeating: %.1f vs %.1f dB", energy(lots, 1.45, 3.9), energy(none, 1.45, 3.9));
+      // Tone darkens the repeats of broadband material: use a click-rich burst
+      auto click = [&](float tone) { Chain c; c.prepare(SR); setAllOff(c); c.setTempo(120); c.setParam(kSpaceOn, 1); c.setParam(kReverbMix, 0); c.setParam(kDelayMix, 100);
+          c.setParam(kDelayTime, 5); c.setParam(kDelayDuck, 0); c.setParam(kDelayFeedback, 80); c.setParam(kDelayTone, tone);
+          std::vector<float> l(N, 0.f); l[10] = 0.8f; auto r = l; runChain(c, l, r); return l; };
+      const auto dark = click(1000.f), bright = click(12000.f);
+      auto hf = [&](const std::vector<float>& x) { Biquad h; h.set(BiquadCoef::highpass(4000, 0.707, SR)); double e = 0; for (size_t i = 0; i < x.size(); ++i) { const float y = h.process(x[i]); if (i > 72000) e += y * y; } return 10 * std::log10(e + 1e-20); };
+      CHECK(hf(dark) < hf(bright) - 6.0, "lower delay tone darkens the repeats: %.1f vs %.1f dB", hf(dark), hf(bright)); }
+    // Reverb pre-delay: nothing before it.
+    auto rvRun = [&](float pre, float lo, float hi) {
+        Chain c; c.prepare(SR); setAllOff(c); c.setParam(kSpaceOn, 1); c.setParam(kDelayMix, 0); c.setParam(kReverbMix, 100); c.setParam(kReverbDuck, 0);
+        c.setParam(kSpaceType, 1); c.setParam(kReverbPreDelay, pre); c.setParam(kReverbLowCut, lo); c.setParam(kReverbHighCut, hi);
+        std::vector<float> l(N, 0.f); l[10] = 0.8f; auto r = l; runChain(c, l, r); return l; };
+    { const auto p0 = rvRun(0.f, 20.f, 20000.f), p80 = rvRun(80.f, 20.f, 20000.f);
+      CHECK(energy(p80, 0.025, 0.080) < energy(p0, 0.025, 0.080) - 25.0, "pre-delay 80 ms empties 25-80 ms: %.1f vs %.1f dB", energy(p80, 0.025, 0.08), energy(p0, 0.025, 0.08));
+      CHECK(energy(p80, 0.1, 0.5) > -40.0, "reverb still arrives after the pre-delay");
+      auto band = [&](const std::vector<float>& x, bool high) { Biquad f; f.set(high ? BiquadCoef::highpass(4000, 0.707, SR) : BiquadCoef::lowpass(200, 0.707, SR)); double e = 0; for (size_t i = 0; i < x.size(); ++i) { const float y = f.process(x[i]); if (i > 4800) e += y * y; } return 10 * std::log10(e + 1e-20); };   // skip the dry impulse
+      const auto base = rvRun(0.f, 20.f, 20000.f), dark = rvRun(0.f, 20.f, 2000.f), thin = rvRun(0.f, 400.f, 20000.f);
+      CHECK(band(dark, true) < band(base, true) - 10.0, "reverb high-cut removes the top: %.1f vs %.1f dB", band(dark, true), band(base, true));
+      CHECK(band(thin, false) < band(base, false) - 10.0, "reverb low-cut removes the bottom: %.1f vs %.1f dB", band(thin, false), band(base, false)); }
+    // EQ high-cut: 24 dB/oct, flat below.
+    { EqSettings s; s.low = 0; s.mid = 0; s.high = 0; s.air = 0; s.lowCut = 20; s.highCut = 3000;
+      BiquadCoef h[2]; eqHighCutDesign(s, SR, h);
+      auto mag = [&](double f) { return 20 * std::log10(h[0].magnitude(f, SR) * h[1].magnitude(f, SR)); };
+      CHECK(std::fabs(mag(500)) < 0.3, "high-cut flat at 500 Hz: %.2f dB", mag(500));
+      CHECK(std::fabs(mag(3000) + 3.0) < 0.7, "high-cut is -3 dB at its corner: %.2f dB", mag(3000));
+      CHECK(mag(12000) < -45.0, "high-cut at 12 kHz: %.1f dB (4th order)", mag(12000));
+      Chain c; c.prepare(SR); setAllOff(c); c.setParam(kEqOn, 1); c.setParam(kEqLow, 0); c.setParam(kEqMid, 0); c.setParam(kEqHigh, 0); c.setParam(kEqAir, 0); c.setParam(kEqLowCut, 20); c.setParam(kEqHighCut, 3000);
+      std::vector<float> l(48000); for (size_t i = 0; i < l.size(); ++i) l[i] = 0.2f * std::sin(2 * kPi * 9000 * i / SR); auto r = l; const auto ref = l; runChain(c, l, r);
+      CHECK(rmsDb(l, 24000, 48000) < rmsDb(ref, 24000, 48000) - 30.f, "9 kHz sine through the high-cut: %.1f dB", rmsDb(l, 24000, 48000) - rmsDb(ref, 24000, 48000)); }
+}
+
+// Every factory preset, including the 1.1 ones: finite, under the limiter, and neither silent nor huge.
+static void testFactoryPresetsRender() {
+    std::printf("factory presets render sanely\n");
+    for (uint32_t k = 0; k < kNumFactoryPresets; ++k) {
+        Chain c; c.prepare(SR);
+        float v[kParamCount]; presetToValues(kFactoryPresets[k], v);
+        for (uint32_t i = 0; i < kParamCount; ++i) c.setParam(i, v[i]);
+        auto l = voice(150, 96000, 0.12f, 14), r = l;
+        for (size_t i = 40000; i < 52000; ++i) { l[i] = 0.f; r[i] = 0.f; }   // a pause, so gates and riders get exercised
+        runChain(c, l, r);
+        bool fin = true; float pk = 0;
+        for (size_t i = 0; i < l.size(); ++i) { fin &= std::isfinite(l[i]) && std::isfinite(r[i]); pk = std::max(pk, std::max(std::fabs(l[i]), std::fabs(r[i]))); }
+        const float lvl = rmsDb(l, 60000, 96000);
+        CHECK(fin, "%s finite", kFactoryPresets[k].name);
+        CHECK(pk <= dbToLin(-1.f) + 1e-3f, "%s peak %.3f under the limiter", kFactoryPresets[k].name, pk);
+        CHECK(lvl > -40.f && lvl < -6.f, "%s output level %.1f dB is sane", kFactoryPresets[k].name, lvl);
+    }
+}
+
 static void testPresetStore() {
     std::printf("preset store + json\n");
     namespace fs = std::filesystem;
     const std::string base = "lstrip_test_store";
     fs::remove_all(base);
     PresetStore st(base + "/presets", base + "/config");
-    float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = kParams[i].def;
+    float v[kParamCount]; for (uint32_t i = 0; i < kParamCount; ++i) v[i] = kParams[i].def;
     v[kIntensity] = 42; v[kEqAir] = -3.25f; v[kTuneOn] = 1;
     std::string err;
     CHECK(st.save("My \"Vocal\"/Chain", v, &err), "save: %s", err.c_str());
@@ -401,6 +621,7 @@ static void testPresetStore() {
 
 int main() {
     testPresetStore();
+    testNewParamsNeutral(); testTranspose(); testPlosive(); testLeveler(); testSpaceExtras(); testFactoryPresetsRender();
     testParamTable(); testPassthrough(); testBlockSizes(); testGate(); testCompressor(); testDeEsser();
     testLimiter(); testGateAtIntensity(); testTuneAlignment(); testEq(); testMultiband(); testSpace(); testPitch(); testConcurrentParams(); testGarbageInput(); testFuzz();
     std::printf("\n%d checks passed, %d failed\n", g_pass, g_fail);

@@ -5,12 +5,15 @@ L-STRIP
 Open-source VST3 + VST2 plugin for Linux.
 Compatible with OBS Studio and any other VST host.
 
-L-STRIP is a one-window vocal chain: noise gate, real-time pitch
-correction, compressor, de-esser, equalizer, multiband (OTT-style)
-compression, space (reverb, tempo-synced delay and chorus with ducking) and
-an output saturator with a safety limiter.  One intensity knob sets how much
-of the chain you hear.  Everything is zero latency, except pitch correction,
-which adds about 10 ms while it is on.
+L-STRIP is a one-window vocal chain: noise gate, plosive tamer, real-time
+pitch correction and pitch shift, auto level, compressor, de-esser,
+equalizer, multiband (OTT-style) compression, space (reverb, tempo-synced
+delay and chorus with ducking) and an output saturator with a safety
+limiter.  One intensity knob sets how much of the chain you hear.
+Everything is zero latency, except pitch correction, which adds about 10 ms
+while it is on.  Nineteen factory presets cover talking, streaming,
+whispering, singing, tuned voices and a few character voices (telephone,
+megaphone, cavern, helium, giant).
 
 It ships as VST2, VST3, LV2 and CLAP plugins (each in a stereo and a mono
 variant) and as a standalone JACK application.

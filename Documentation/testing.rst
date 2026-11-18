@@ -13,7 +13,7 @@ Run everything
 ``ctest`` runs four suites:
 
 ``dsp``
-    ``tests/dsp_tests.cpp``: about 3300 checks that need no plugin
+    ``tests/dsp_tests.cpp``: about 4400 checks that need no plugin
     framework (listed below).
 ``vst2-host``, ``vst2-host-mono``
     ``tests/vst2_host_test.cpp``: a minimal VST2 host that ``dlopen``\ s the
@@ -26,8 +26,9 @@ Run everything
 What the DSP suite covers
 =========================
 
-* The parameter table: unique symbols, defaults in range, outputs last, and
-  the scale masks.
+* The parameter table: unique symbols, defaults in range, the outputs
+  forming one block flagged ``fOutput``, the host-index mapping round
+  trip, and the scale masks.
 * Bit-exact passthrough with everything off; latency 0 and 10 ms.
 * Independence from the host's block size (37, 512, 4096 samples).
 * Gate, compressor, de-esser (including LISTEN), limiter and saturation,
@@ -47,16 +48,54 @@ What the DSP suite covers
   chain recovers to match a fresh instance.
 * The preset store and JSON reader, including hostile files (huge values,
   wrong types, deep nesting, garbage).
+* The controls added in 1.1, one by one.  Each is an exact bypass at its
+  default (plosive tamer and auto level bit-exact at 0 %).  Transpose lands
+  within 10 cents of the target from -12 to +12 semitones on two voices and
+  keeps the level; unvoiced noise follows the shift and, when not
+  transposing, still passes straight through; the latency stays 10 ms.
+  Correction at 100 % pulls a note 35 cents flat to the target and at 0 %
+  leaves it alone.  The plosive tamer must remove at least 5-8 dB from a
+  pop's low band, leave the voice after it untouched, leave sung notes from
+  70 to 160 Hz within 0.5 dB and not click when switched off.  Auto level
+  must narrow a 25 dB loudness gap, hold its gain through a pause (the
+  case that makes naive riders pump) and glide, not jump, when switched
+  off.  Delay feedback and tone, reverb pre-delay and cuts, and the EQ
+  high-cut are measured against their intended response.
+* Every factory preset (the 1.1 ones included) renders finite, under the
+  limiter ceiling and at a sane level.
 
 What the host harness covers
 ============================
 
 Entry point and magic number; input and output counts (and, for the mono
-build, that a null second channel is never touched); round-trip of every
-parameter through the host's normalised range; every factory preset
-rendered through the plugin and compared with the reference ``Chain``;
-reported latency following Tune; a state chunk saved from one instance and
-restored into another; independence of two instances.
+build, that a null second channel is never touched); that every input
+parameter (and no meter) is visible to the host, with the v1.0 parameters
+at the index they always had; round-trip of every parameter through the
+host's normalised range; every factory preset rendered through the plugin
+and compared with the reference ``Chain``; reported latency following Tune;
+a state chunk saved from one instance and restored into another; a
+hand-built chunk in the format a v1.0 plugin wrote (none of the 1.1
+parameters in it), which must restore the old values and leave the new
+controls at their defaults; independence of two instances.
+
+Backward compatibility with an earlier release
+==============================================
+
+Parameter ids are permanent, and every parameter added later defaults to "no
+effect".  ``tools/compat-check.sh`` proves the second half::
+
+    tools/compat-check.sh            # against the newest v* tag
+    tools/compat-check.sh v1.0       # or any revision
+
+It compiles ``tools/compat_render.cpp`` twice, against the old revision's
+sources (taken with ``git archive``, so the repository is not touched) and
+against the working tree, renders a fixed synthetic voice through every
+factory preset and through 24 seeded random settings of the original
+parameters (at 48 and 44.1 kHz, with parameter changes while audio runs),
+and requires every render the old build made to be reproduced bit for bit.
+It is not part of ``ctest`` (it needs git history and a second compiler
+run), but CMake builds the renderer so that it cannot stop compiling.  Run it
+before every release.  Checked against v1.0 for 1.1: 92 of 92 identical.
 
 Sanitizers
 ==========

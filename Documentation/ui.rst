@@ -47,7 +47,9 @@ Equalizer
 
 The header holds the TUNE button, the preset name with previous / next
 arrows, the light/dark switch, Save and Presets.  The pitch-correction
-panel opens from TUNE.
+panel opens from TUNE.  Below the master faders sit TIPS and MORE; MORE
+opens the panel of extra controls described below and is lit while any of
+them is away from its default.
 
 Interaction model
 =================
@@ -87,6 +89,23 @@ Pitch-correction panel
   switches to *Custom*.  Changing Key while on a Custom scale transposes
   the notes with it.
 * Key and Scale steppers, and the Speed, Humanize and Mix knobs.
+
+The "More" panel
+================
+
+The controls added in 1.1 live in one panel, so the main window keeps the
+layout it had:
+
+* Voice: Auto Level and Plosive Tamer (both start at Off).
+* Pitch shift: the PITCH ON switch, a Transpose stepper (-12 to +12
+  semitones) and the Correction slider.  A hint appears when a shift is set
+  while pitch correction is off.
+* Tone: the EQ high-cut (the equalizer curve in the main window shows it).
+* Delay: Feedback and Tone.
+* Reverb: Pre-delay, Low-cut and High-cut.
+
+Hover tips work inside the panel.  Esc, the close button or a click outside
+the card closes it.
 
 Presets in the editor
 =====================

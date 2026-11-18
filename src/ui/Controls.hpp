@@ -439,21 +439,24 @@ struct EqCurveView : Control {
     float dy(float db) const { return y + h * 0.5f - db / kRange * (h * 0.5f - 6.f); }
     dsp::EqSettings settings(UiBase& u) const {
         dsp::EqSettings s; s.low = u.get(kEqLow); s.mid = u.get(kEqMid); s.high = u.get(kEqHigh); s.air = u.get(kEqAir);
-        s.lowCut = u.get(kEqLowCut); s.style = static_cast<int>(u.get(kEqStyle) + 0.5f); return s;
+        s.lowCut = u.get(kEqLowCut); s.style = static_cast<int>(u.get(kEqStyle) + 0.5f); s.highCut = u.get(kEqHighCut); return s;
     }
     void draw(UiBase& u) override {
         u.fillRR(x, y, w, h, 10.f, u.dark() ? Color(14, 17, 23) : Color(236, 240, 246));
         u.strokeRR(x, y, w, h, 10.f, u.th.panelEdge, 1.f);
         const dsp::EqSettings s = settings(u);
         dsp::BiquadCoef co[5]; dsp::eqDesign(s, 48000.0, co);
+        dsp::BiquadCoef hc[2]; const bool hcOn = s.highCut < dsp::kHighCutOff; if (hcOn) dsp::eqHighCutDesign(s, 48000.0, hc);
         const bool on = u.get(kEqOn) > 0.5f;
         u.save(); u.scissor(x + 1.f, y + 1.f, w - 2.f, h - 2.f);
         if (s.lowCut > 21.f) { u.beginPath(); u.rect(x, y, fx(s.lowCut) - x, h); u.fillColor(u.th.accentSoft.withAlpha(0.8f)); u.fill(); }
+        if (hcOn) { const float hx = fx(s.highCut); u.beginPath(); u.rect(hx, y, x + w - hx, h); u.fillColor(u.th.accentSoft.withAlpha(0.8f)); u.fill(); }
         u.line(x + 2.f, dy(0), x + w - 2.f, dy(0), u.th.textFaint.withAlpha(0.35f), 1.f, false);
         u.beginPath();
         for (int i = 0; i <= 90; ++i) {
             const float f = kF0 * std::pow(kF1 / kF0, i / 90.f);
             double m = 1.0; for (int k = 0; k < 5; ++k) m *= co[k].magnitude(f, 48000.0);
+            if (hcOn) m *= hc[0].magnitude(f, 48000.0) * hc[1].magnitude(f, 48000.0);
             const float db = std::min(std::max(static_cast<float>(20.0 * std::log10(m + 1e-9)), -kRange), kRange);
             if (i == 0) u.moveTo(fx(f), dy(db)); else u.lineTo(fx(f), dy(db));
         }

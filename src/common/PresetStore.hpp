@@ -24,7 +24,7 @@ namespace lstrip {
 struct UserPreset {
     std::string name;
     std::string category = "User";
-    float values[kNumInputParams];
+    float values[kParamCount];   // indexed by id; entries for outputs are unused
 };
 
 class PresetStore {
@@ -121,7 +121,7 @@ public:
             if (name == kFactoryPresets[i].name) { if (err) *err = "That name belongs to a factory preset"; return false; }
         std::error_code ec;
         fs::create_directories(dataDir_, ec);
-        UserPreset p; p.name = name; std::copy(values, values + kNumInputParams, p.values);
+        UserPreset p; p.name = name; std::copy(values, values + kParamCount, p.values);
         const std::string path = dataDir_ + "/" + fileNameFor(name);
         if (!writeFile(path, p)) { if (err) *err = "Could not write " + path; return false; }
         reload();
@@ -142,7 +142,7 @@ public:
         if (nn.empty()) { if (err) *err = "Name is empty"; return false; }
         if (nn == oldName) return true;
         if (find(nn)) { if (err) *err = "A preset with that name exists"; return false; }
-        float v[kNumInputParams]; std::copy(p->values, p->values + kNumInputParams, v);
+        float v[kParamCount]; std::copy(p->values, p->values + kParamCount, v);
         if (!save(nn, v, err)) return false;
         remove(oldName);
         if (stars_.erase(oldName)) { stars_.insert(nn); saveConfig(); }
@@ -164,7 +164,7 @@ public:
     bool exportTo(const std::string& name, const float* values, const std::string& dir, std::string* pathOut = nullptr) const {
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
-        UserPreset p; p.name = name; std::copy(values, values + kNumInputParams, p.values);
+        UserPreset p; p.name = name; std::copy(values, values + kParamCount, p.values);
         const std::string path = dir + "/" + fileNameFor(name);
         if (!writeFile(path, p)) return false;
         if (pathOut) *pathOut = path;
@@ -208,10 +208,10 @@ public:
         out.name = cleanName(nm->s);
         if (out.name.empty()) return false;
         if (const Json* c = j.get("category")) if (c->type == Json::Str) out.category = c->s.empty() ? "User" : c->s.substr(0, 24);
-        for (uint32_t i = 0; i < kNumInputParams; ++i) out.values[i] = kParams[i].def;
+        for (uint32_t i = 0; i < kParamCount; ++i) out.values[i] = kParams[i].def;
         for (const auto& kv : ps->o) {
             const int id = findParamBySymbol(kv.first.c_str());
-            if (id < 0 || static_cast<uint32_t>(id) >= kNumInputParams) continue;
+            if (id < 0 || isOutput(static_cast<uint32_t>(id))) continue;
             double v = kv.second.type == Json::Num ? kv.second.n : (kv.second.type == Json::Bool ? (kv.second.b ? 1.0 : 0.0) : kParams[id].def);
             v = std::min<double>(std::max<double>(v, kParams[id].min), kParams[id].max);
             out.values[id] = static_cast<float>(v);
@@ -225,7 +225,7 @@ private:
         j.set("format", Json::string(kFormat)).set("version", Json::number(kVersion));
         j.set("name", Json::string(p.name)).set("category", Json::string(p.category));
         Json ps = Json::object();
-        for (uint32_t i = 0; i < kNumInputParams; ++i) ps.set(kParams[i].symbol, Json::number(p.values[i]));
+        for (uint32_t i = 0; i < kParamCount; ++i) if (!isOutput(i)) ps.set(kParams[i].symbol, Json::number(p.values[i]));
         j.set("params", ps);
         std::ofstream f(path, std::ios::trunc);
         if (!f) return false;

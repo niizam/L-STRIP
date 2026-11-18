@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.15)
-project(L-STRIP VERSION 1.0.0 LANGUAGES C CXX)
+project(L-STRIP VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,10 @@ if(LSTRIP_BUILD_TESTS)
   target_link_libraries(lstrip-dsp-tests PRIVATE lstrip_dsp)
   target_compile_options(lstrip-dsp-tests PRIVATE -Wall -Wextra -O2)
   add_test(NAME dsp COMMAND lstrip-dsp-tests)
+  # Not run here: tools/compat-check.sh builds it against an older release.  Built so it cannot bit-rot.
+  add_executable(lstrip-compat-render tools/compat_render.cpp)
+  target_link_libraries(lstrip-compat-render PRIVATE lstrip_dsp)
+  target_compile_options(lstrip-compat-render PRIVATE -Wall -Wextra -O2)
 endif()
 
 # Parameter reference generated from the parameter table (and checked for drift).

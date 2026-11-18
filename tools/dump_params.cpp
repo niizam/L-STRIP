@@ -23,7 +23,7 @@ static void emit(std::string s) {   // no trailing whitespace in generated docs
 static const char* unitName(Unit u) {
     switch (u) {
     case Unit::dB: return "dB"; case Unit::Percent: return "%"; case Unit::Hz: return "Hz";
-    case Unit::kHz: return "Hz"; case Unit::ms: return "ms"; case Unit::Midi: return "MIDI";
+    case Unit::kHz: return "Hz"; case Unit::ms: return "ms"; case Unit::Midi: return "MIDI"; case Unit::St: return "st";
     default: return "";
     }
 }
@@ -34,7 +34,8 @@ static const char* group(uint32_t id) {
     if (id <= kMbHigh) return "Multiband";
     if (id <= kEqLowCut) return "Equalizer";
     if (id <= kTuneMix) return "Auto-tune";
-    return "Outputs";
+    if (id <= kLastOutput) return "Outputs";
+    return "Added in 1.1";
 }
 
 int main() {
@@ -47,10 +48,13 @@ int main() {
     std::puts("====================");
     std::puts("");
     std::puts("Every control in L-STRIP is one of the parameters below.  The *symbol* is");
-    std::puts("the stable identifier used in preset files; the *id* is the position in the");
-    std::puts("host's parameter list.  Ids and symbols never change once released: new");
-    std::printf("parameters are only ever appended.  Parameters with id >= %u are read-only\n", kNumInputParams);
-    std::puts("meters for the editor; they are hidden from hosts.");
+    std::puts("the stable identifier used in preset files; the *id* is the permanent");
+    std::puts("number of the parameter inside L-STRIP.  Ids and symbols never change once");
+    std::printf("released: new parameters are only ever appended.  The ids %u to %u are\n", kFirstOutput, kLastOutput);
+    std::puts("read-only meters for the editor; they are hidden from hosts.  Parameters");
+    std::puts("added later therefore have ids after the meters.  Hosts see the controls");
+    std::puts("(everything that is not a meter) in id order, then the meters, so the host");
+    std::puts("index of a control is its id, minus the number of meters for ids after them.");
     std::puts("");
 
     const char* cur = "";
@@ -107,8 +111,9 @@ int main() {
     std::puts("");
     std::puts("The text shown by the editor's TIPS tooltips, per parameter:");
     std::puts("");
-    for (uint32_t i = 0; i < kNumInputParams; ++i) {
+    for (uint32_t i = 0; i < kParamCount; ++i) {
         const ParamDef& d = kParams[i];
+        if (isOutput(i)) continue;
         if (!d.tip || !*d.tip) continue;
         std::printf("``%s``\n", d.symbol);
         // wrap tip at 70 columns, indented

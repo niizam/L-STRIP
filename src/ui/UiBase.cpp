@@ -20,13 +20,13 @@ UiBase::UiBase() : UI(static_cast<uint>(kW), static_cast<uint>(kH)) {
 }
 
 void UiBase::set(uint32_t id, float v) {
-    if (id >= kNumInputParams) return;
+    if (id >= kParamCount || isOutput(id)) return;
     const ParamDef& d = kParams[id];
     v = std::min(std::max(v, d.min), d.max);
     if (d.kind == Kind::Int || d.kind == Kind::Enum || d.kind == Kind::Bool) v = std::floor(v + 0.5f);
     if (v == val_[id]) return;
     val_[id] = v;
-    setParameterValue(id, v);
+    setParameterValue(idToHost(id), v);
 }
 
 float UiBase::toNorm(uint32_t id, float v) const {
@@ -47,11 +47,17 @@ std::string UiBase::format(uint32_t id, float v, bool withUnit) const {
     switch (d.kind) {
     case Kind::Bool: return v > 0.5f ? "On" : "Off";
     case Kind::Enum: { const int i = std::min(std::max(static_cast<int>(v + 0.5f - d.min), 0), static_cast<int>(d.max - d.min)); return d.labels[i]; }
-    case Kind::Int: std::snprintf(b, sizeof b, "%d", static_cast<int>(v + 0.5f)); return b;
+    case Kind::Int:
+        if (d.unit == Unit::St) { const int n = static_cast<int>(std::lround(v)); std::snprintf(b, sizeof b, withUnit ? "%+d st" : "%+d", n); if (n == 0) std::snprintf(b, sizeof b, withUnit ? "0 st" : "0"); return b; }
+        std::snprintf(b, sizeof b, "%d", static_cast<int>(v + 0.5f)); return b;
     default: break;
     }
     if (id == kGateThresh && v <= d.min + 0.5f) return "Off";
     if (id == kEqLowCut && v <= d.min + 1.f) return "Off";
+    if ((id == kEqHighCut || id == kReverbHighCut) && v >= d.max - 100.f) return "Off";
+    if (id == kReverbLowCut && v <= d.min + 1.f) return "Off";
+    if ((id == kPlosive || id == kLevelAmount) && v < 0.5f) return "Off";
+    if (id == kEqHighCut || id == kReverbHighCut || id == kDelayTone) { std::snprintf(b, sizeof b, withUnit ? "%.1f kHz" : "%.1f", v / 1000.f); return b; }
     switch (d.unit) {
     case Unit::dB: {
         const bool duck = id == kReverbDuck || id == kDelayDuck, rng = id == kDeessRange;
@@ -109,7 +115,7 @@ void UiBase::pollShared() {
     if (dbg) { static double last = 0; const double t = now(); if (t - last > 2.0) { last = t; std::fprintf(stderr, "[L-STRIP ui] meter_in %.1f dB  meter_out %.1f dB\n", shared->get(kMeterIn), shared->get(kMeterOut)); } }
     for (uint32_t i = 0; i < kParamCount; ++i) {
         const float v = shared->get(i);
-        if (i >= kNumInputParams) { val_[i] = v; continue; }
+        if (isOutput(i)) { val_[i] = v; continue; }
         // In VST3/CLAP an editor edit reaches `shared` only after the host forwards it.  Adopting a
         // value only when *shared* changed keeps those local edits from being reverted meanwhile,
         // while host automation and program changes (which change `shared`) still flow in.

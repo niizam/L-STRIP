@@ -8,6 +8,11 @@
 //             cross-fade jump is a whole number of periods.  Small corrections
 //             make the taps sweep slowly, so jumps are rare.
 //
+// Transpose (-12..+12 semitones) adds a constant shift on top of the correction.  The shifter always moves
+// formants along with pitch, so a large shift also changes the voice character (up = a smaller voice, down = a larger one).
+// While transposing, unvoiced sounds (breaths, "s", "t") are shifted too, using the last pitch period, so they
+// do not jump back to the original pitch.
+//
 // Latency: a fixed 10 ms (reported to the host while the module is enabled).
 // The mean tap delay is held at that value by setting the minimum tap delay to
 // (10 ms - one pitch period), so the shifted and un-shifted (dry) paths stay
@@ -24,6 +29,8 @@ struct TuneSettings {
     float speedMs = 80.f;   // 0 = instant/robotic
     float humanize = 0.3f;  // 0..1
     float mix = 1.f;        // 0..1
+    int transpose = 0;      // semitones, added after the correction
+    float amount = 1.f;     // 0..1, how much of the correction is applied
 };
 
 struct TuneReadout {
@@ -53,7 +60,7 @@ public:
         L_ = 2.f * static_cast<float>(sr_) / 150.f; T0_ = static_cast<float>(sr_) / 150.f;
         ro_ = TuneReadout{};
     }
-    void set(const TuneSettings& s) { s_ = s; }
+    void set(const TuneSettings& s) { s_ = s; tCents_ = static_cast<float>(clampi(s.transpose, -12, 12)) * 100.f; }
     int latencySamples() const { return latency_; }
     const TuneReadout& readout() const { return ro_; }
 
@@ -69,7 +76,7 @@ public:
             PitchEstimate est;
             if (det_.push(0.5f * (l[i] + r[i]), est)) onEstimate(est);
 
-            ratio_ += (std::exp2(corrCents_ * (1.f / 1200.f)) - ratio_) * ratioC;
+            ratio_ += (std::exp2((corrCents_ + tCents_) * (1.f / 1200.f)) - ratio_) * ratioC;
             L_ += (2.f * T0_ - L_) * lenC;
             const float Lc = clampf(L_, 2.f * 0.0011f * fsr, maxL);
             const float dmin = std::max(kMinTapSec * fsr, fixedDelay - 0.5f * Lc); // keeps mean tap delay == latency
@@ -95,8 +102,17 @@ public:
 
 private:
     void onEstimate(const PitchEstimate& e) {
+        // Pure transposition with no notes allowed: keep the shifter's cycle length locked to the voice.
+        if (e.voiced && s_.mask == 0 && tCents_ != 0.f)
+            T0_ = clampf(static_cast<float>(sr_) / e.hz, static_cast<float>(sr_) / 900.f, static_cast<float>(sr_) / 70.f);
         if (!e.voiced || s_.mask == 0) {
-            if (++unvoicedHops_ > 10) { wetTarget_ = 0.f; haveNote_ = false; ro_.inMidi = ro_.outMidi = 0.f; wasVoiced_ = false; }
+            if (++unvoicedHops_ > 10) {
+                // Transposing keeps the shifter on so breaths and consonants move with the voice; the pitch
+                // correction itself relaxes to zero because there is no pitch to correct.
+                wetTarget_ = tCents_ != 0.f ? 1.f : 0.f;
+                if (tCents_ != 0.f) corrCents_ += -corrCents_ * (1.f - std::exp(-hopSec_ / 0.05f));
+                haveNote_ = false; ro_.inMidi = ro_.outMidi = 0.f; wasVoiced_ = false;
+            }
             return;
         }
         unvoicedHops_ = 0;
@@ -122,16 +138,18 @@ private:
         if (!wasVoiced_) { slow_ = dc; wasVoiced_ = true; }
         slow_ += (dc - slow_) * (1.f - std::exp(-hopSec_ / 0.20f));
         const float fast = dc - slow_;
-        corrTarget_ = clampf(-(dc - s_.humanize * fast), -400.f, 400.f);
+        corrTarget_ = clampf(-(dc - s_.humanize * fast), -400.f, 400.f) * s_.amount;
         const float tau = std::max(s_.speedMs * 0.001f, 0.0005f);
         corrCents_ += (corrTarget_ - corrCents_) * (1.f - std::exp(-hopSec_ / tau));
 
         ro_.inMidi = midi;
-        ro_.outMidi = midi + corrCents_ * 0.01f;
+        ro_.outMidi = midi + (corrCents_ + tCents_) * 0.01f;
     }
 
+    static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
     double sr_ = 48000;
     TuneSettings s_;
+    float tCents_ = 0.f;
     DelayLine buf_[2];
     PitchDetector det_;
     int latency_ = 288, curNote_ = 0, unvoicedHops_ = 1000;

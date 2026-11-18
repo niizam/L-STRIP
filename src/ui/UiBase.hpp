@@ -31,8 +31,8 @@ public:
     float get(uint32_t id) const { return val_[id]; }
     // User edit: clamps, caches and tells the host/DSP.
     void set(uint32_t id, float v);
-    void begin(uint32_t id) { editParameter(id, true); }
-    void end(uint32_t id) { editParameter(id, false); }
+    void begin(uint32_t id) { editParameter(idToHost(id), true); }
+    void end(uint32_t id) { editParameter(idToHost(id), false); }
     void reset(uint32_t id) { begin(id); set(id, kParams[id].def); end(id); }
 
     // Normalised 0..1 <-> value (logarithmic where the table says so).
@@ -90,7 +90,8 @@ public:
     void bindShared(std::shared_ptr<SharedState> s);
 
     // DPF callbacks that are common to all subclasses.
-    void parameterChanged(uint32_t index, float value) override { if (index < kParamCount) val_[index] = value; }
+    // DPF hands us its own index (host order); the UI works with permanent ids.
+    void parameterChanged(uint32_t index, float value) override { if (index < kParamCount) val_[hostToId(index)] = value; }
     void stateChanged(const char* key, const char* value) override;
 
     // current preset name as stored in the session

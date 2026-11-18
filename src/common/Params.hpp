@@ -33,13 +33,31 @@ enum ParamId : uint32_t {
     kBandLow, kBandMid, kBandHigh,
     kReverbSend, kDelaySend, kReverbDuckGR, kDelayDuckGR,
     kTuneInMidi, kTuneOutMidi,
+    // --- Added in 1.1 ---  New inputs go after the outputs because ids are permanent.  Every one of them
+    // defaults to "no effect", so sessions and presets made before 1.1 sound exactly as they did.
+    kTuneTranspose, kTuneAmount, kEqHighCut, kPlosive, kLevelAmount,
+    kDelayFeedback, kDelayTone, kReverbPreDelay, kReverbLowCut, kReverbHighCut,
     kParamCount
 };
 
-constexpr uint32_t kNumInputParams = kMeterIn;
+// The outputs (meters and read-outs) are one contiguous block of ids.  Whether an id is an output is decided by
+// its fOutput flag (isOutput), never by comparing it with a constant, so inputs may follow the outputs.
+constexpr uint32_t kFirstOutput = kMeterIn;
+constexpr uint32_t kLastOutput = kTuneOutMidi;
+constexpr uint32_t kNumOutputs = kLastOutput - kFirstOutput + 1;
+constexpr uint32_t kNumInputs = kParamCount - kNumOutputs;
+
+// The index hosts see (DPF's parameter index) is not the id: DPF wants all outputs last, so inputs come first, in
+// id order, then the outputs.  Ids below kFirstOutput keep their index, which keeps v1.0 sessions loading.
+constexpr uint32_t idToHost(uint32_t id) {
+    return id < kFirstOutput ? id : (id <= kLastOutput ? kNumInputs + (id - kFirstOutput) : id - kNumOutputs);
+}
+constexpr uint32_t hostToId(uint32_t host) {
+    return host < kFirstOutput ? host : (host < kNumInputs ? host + kNumOutputs : kFirstOutput + (host - kNumInputs));
+}
 
 enum class Kind : uint8_t { Float, Bool, Int, Enum };
-enum class Unit : uint8_t { None, dB, Percent, Hz, kHz, ms, Midi };
+enum class Unit : uint8_t { None, dB, Percent, Hz, kHz, ms, Midi, St };
 
 enum : uint8_t { fOutput = 1, fLog = 2 };
 
@@ -202,11 +220,41 @@ inline constexpr ParamDef kParams[kParamCount] = {
     {"delay_duck_gr", "Delay Duck Reduction", "DlDuck", Kind::Float, Unit::dB, 0, 24, 0, fOutput, "", nullptr},
     {"tune_in_midi", "Detected Pitch", "InMidi", Kind::Float, Unit::Midi, 0, 127, 0, fOutput, "", nullptr},
     {"tune_out_midi", "Corrected Pitch", "OutMidi", Kind::Float, Unit::Midi, 0, 127, 0, fOutput, "", nullptr},
+    // Added in 1.1
+    {"tune_transpose", "Transpose", "Pitch", Kind::Int, Unit::St, -12, 12, 0, 0,
+     "Shifts your voice up or down in semitones (the voice character moves with it). Needs Pitch Correction on.", nullptr},
+    {"tune_amount", "Correction", "Amount", Kind::Float, Unit::Percent, 0, 100, 100, 0,
+     "How much of the pitch correction is applied. 0 % leaves your pitch alone, so Transpose is a pure pitch shift.", nullptr},
+    {"eq_highcut", "High-Cut", "HiCut", Kind::Float, Unit::Hz, 2000, 20000, 20000, fLog,
+     "Rolls off the top end for a dark, phone or megaphone sound. All the way up = Off.", nullptr},
+    {"plosive", "Plosive Tamer", "Pops", Kind::Float, Unit::Percent, 0, 100, 0, 0,
+     "Softens 'p' and 'b' thumps by cutting the lows only while one happens. Sung low notes are left alone.", nullptr},
+    {"level_amount", "Auto Level", "Level", Kind::Float, Unit::Percent, 0, 100, 0, 0,
+     "A slow volume rider: lifts quiet passages and eases loud ones before the compressor, and holds still in pauses.", nullptr},
+    {"delay_feedback", "Delay Feedback", "Repeat", Kind::Float, Unit::Percent, 0, 90, 40, 0,
+     "How many echoes you hear. Higher repeats more.", nullptr},
+    {"delay_tone", "Delay Tone", "DlTone", Kind::Float, Unit::Hz, 1000, 16000, 4500, fLog,
+     "Darkens the echoes. Lower = softer, duller repeats.", nullptr},
+    {"reverb_predelay", "Reverb Pre-delay", "PreDly", Kind::Float, Unit::ms, 0, 100, 0, 0,
+     "Extra gap before the reverb starts, so your words stay clear. Added to the reverb type's own pre-delay.", nullptr},
+    {"reverb_lowcut", "Reverb Low-Cut", "RvLo", Kind::Float, Unit::Hz, 20, 1000, 20, fLog,
+     "Keeps boom out of the reverb. 20 Hz = Off.", nullptr},
+    {"reverb_highcut", "Reverb High-Cut", "RvHi", Kind::Float, Unit::Hz, 2000, 20000, 20000, fLog,
+     "Makes the reverb darker, like a cave or a padded room. All the way up = Off.", nullptr},
 };
 
 #undef LS_NOTE
 
 inline constexpr bool isOutput(uint32_t id) { return (kParams[id].flags & fOutput) != 0; }
+
+// The output block must be exactly the ids [kFirstOutput, kLastOutput]; the mapping above relies on it.
+constexpr bool outputsAreContiguous() {
+    for (uint32_t i = 0; i < kParamCount; ++i)
+        if (isOutput(i) != (i >= kFirstOutput && i <= kLastOutput)) return false;
+    return true;
+}
+static_assert(outputsAreContiguous(), "outputs must be one contiguous id block");
+static_assert(kNumInputs + kNumOutputs == kParamCount, "id space");
 
 inline int findParamBySymbol(const char* sym) {
     for (uint32_t i = 0; i < kParamCount; ++i)

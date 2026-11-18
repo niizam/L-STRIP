@@ -23,7 +23,21 @@ Natural Tune    Tune      Pitch correction in C major, natural speed
 Robot Voice     Tune      Hard pitch correction with delay and chorus
 De-ess Only     Utility   Only the de-esser is active
 Init            Utility   All parameter defaults
+Chat Voice      Stream    Chat and gaming: auto level, plosive tamer, dry
+Whisper         Podcast   Gate off, strong auto level, upward multiband
+Telephone       Stream    Band-limited 300 Hz - 3.4 kHz, dense and gritty
+Megaphone       Stream    Narrow and hard, OTT multiband, tight echo
+Small Room      Music     Short reverb, darkened and without boom
+Cavern          Music     Hall, long dark echoes with high feedback
+Helium          Tune      Pitch up eight semitones, no correction
+Giant           Tune      Pitch down eight semitones, thick low end
 =============== ========= ==============================================
+
+The last eight were added in 1.1.  They are appended after the earlier
+presets, so program numbers that existed before did not move.  Helium and
+Giant use Transpose with Correction at 0 %; the shifter moves the
+formants with the pitch, which is what makes them sound like a different
+(smaller or larger) voice.
 
 Hosts that expose programs (VST3, LV2) list these.  DPF's VST2 wrapper
 exposes only one program, so in VST2 hosts such as OBS the presets are
@@ -55,7 +69,9 @@ Values are stored by parameter *symbol* (see ``parameters.rst``).  When a
 file is read:
 
 * unknown symbols are ignored, so presets from newer versions still load;
-* missing symbols take their default value;
+* missing symbols take their default value, which is how presets saved by
+  version 1.0 load in later versions (every parameter added since defaults
+  to "no effect");
 * every value is clamped to the parameter's range, and wrong types fall
   back to the default;
 * files that are not valid JSON, are nested deeper than 32 levels, or are

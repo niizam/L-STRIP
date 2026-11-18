@@ -7,10 +7,13 @@ Parameter reference
 ====================
 
 Every control in L-STRIP is one of the parameters below.  The *symbol* is
-the stable identifier used in preset files; the *id* is the position in the
-host's parameter list.  Ids and symbols never change once released: new
-parameters are only ever appended.  Parameters with id >= 62 are read-only
-meters for the editor; they are hidden from hosts.
+the stable identifier used in preset files; the *id* is the permanent
+number of the parameter inside L-STRIP.  Ids and symbols never change once
+released: new parameters are only ever appended.  The ids 62 to 76 are
+read-only meters for the editor; they are hidden from hosts.  Parameters
+added later therefore have ids after the meters.  Hosts see the controls
+(everything that is not a meter) in id order, then the meters, so the host
+index of a control is its id, minus the number of meters for ids after them.
 
 
 Master
@@ -144,6 +147,24 @@ id  symbol           name                    range               default
 74  delay_duck_gr    Delay Duck Reduction    0 .. 24 dB          0
 75  tune_in_midi     Detected Pitch          0 .. 127 MIDI       0
 76  tune_out_midi    Corrected Pitch         0 .. 127 MIDI       0
+=== ================ ======================= =================== ==========
+
+Added in 1.1
+============
+
+=== ================ ======================= =================== ==========
+id  symbol           name                    range               default
+=== ================ ======================= =================== ==========
+77  tune_transpose   Transpose               -12 .. 12 st        0
+78  tune_amount      Correction              0 .. 100 %          100
+79  eq_highcut       High-Cut                2000 .. 20000 Hz    20000
+80  plosive          Plosive Tamer           0 .. 100 %          0
+81  level_amount     Auto Level              0 .. 100 %          0
+82  delay_feedback   Delay Feedback          0 .. 90 %           40
+83  delay_tone       Delay Tone              1000 .. 16000 Hz    4500
+84  reverb_predelay  Reverb Pre-delay        0 .. 100 ms         0
+85  reverb_lowcut    Reverb Low-Cut          20 .. 1000 Hz       20
+86  reverb_highcut   Reverb High-Cut         2000 .. 20000 Hz    20000
 === ================ ======================= =================== ==========
 
 Choices
@@ -314,3 +335,30 @@ The text shown by the editor's TIPS tooltips, per parameter:
     Keeps the natural vibrato and feel of your voice.
 ``tune_mix``
     Blend of corrected and original voice.
+``tune_transpose``
+    Shifts your voice up or down in semitones (the voice character moves
+    with it). Needs Pitch Correction on.
+``tune_amount``
+    How much of the pitch correction is applied. 0 % leaves your pitch
+    alone, so Transpose is a pure pitch shift.
+``eq_highcut``
+    Rolls off the top end for a dark, phone or megaphone sound. All the way
+    up = Off.
+``plosive``
+    Softens 'p' and 'b' thumps by cutting the lows only while one happens.
+    Sung low notes are left alone.
+``level_amount``
+    A slow volume rider: lifts quiet passages and eases loud ones before the
+    compressor, and holds still in pauses.
+``delay_feedback``
+    How many echoes you hear. Higher repeats more.
+``delay_tone``
+    Darkens the echoes. Lower = softer, duller repeats.
+``reverb_predelay``
+    Extra gap before the reverb starts, so your words stay clear. Added to
+    the reverb type's own pre-delay.
+``reverb_lowcut``
+    Keeps boom out of the reverb. 20 Hz = Off.
+``reverb_highcut``
+    Makes the reverb darker, like a cave or a padded room. All the way up =
+    Off.

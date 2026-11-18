@@ -89,7 +89,7 @@ public:
         store_.loadConfig();
         store_.reload();
         setDark(store_.dark());
-        for (uint32_t i = 0; i < kNumInputParams; ++i) baseline_[i] = kParams[i].def;
+        for (uint32_t i = 0; i < kParamCount; ++i) baseline_[i] = kParams[i].def;
         buildMain();
         driver_.start();
     }
@@ -181,6 +181,7 @@ protected:
         if (active) { active->drag(*this, px, py, (ev.mod & kModifierShift) != 0); return true; }
         Control* c = pick(px, py);
         if (auto* t = dynamic_cast<TuneOverlay*>(overlay_.get())) t->motion(*this);
+        else if (auto* m = dynamic_cast<MoreOverlay*>(overlay_.get())) m->motion(*this);
         else if (auto* p = dynamic_cast<PresetsOverlay*>(overlay_.get())) p->motion(*this);
         else { if (c != hover) hoverSince = now(); hover = c; }
         return true;
@@ -341,7 +342,10 @@ private:
             add<VMeter>(kMeterOut, fx[2] - 14.f, top, hgt, -60.f, 6.f);
             add<VFader>(kOutGain, fx[2], top, hgt, "OUT", false, 48.f);
             add<VFader>(kOutSat, fx[3], top, hgt, "OUT SAT", false, 48.f);
-            auto* tips = add<PillButton>(cx - 32.f, py + 514.f, 64.f, 26.f, "TIPS", [this] { tipsOn = !tipsOn; toast(tipsOn ? "Hover tips on" : "Hover tips off"); });
+            auto* more = add<PillButton>(cx - 70.f, py + 514.f, 64.f, 26.f, "MORE", [this] { openMore(); });
+            more->fontSize = 10.5f; more->isOn = [](UiBase& u) { return MoreOverlay::anyActive(u); };
+            more->tip = "More controls: auto level, plosive tamer, pitch shift, EQ high-cut and extra delay and reverb settings.";
+            auto* tips = add<PillButton>(cx + 6.f, py + 514.f, 64.f, 26.f, "TIPS", [this] { tipsOn = !tipsOn; toast(tipsOn ? "Hover tips on" : "Hover tips off"); });
             tips->icon = 5; tips->isOn = [](UiBase& u) { return u.tipsOn; }; tips->fontSize = 10.5f; tips->tip = "Show or hide a short explanation when you hover over a control.";
             add<BigText>(cx, py + 556.f, "OPEN SOURCE \xC2\xB7 MIT", 8.5f, false, true, 1.6f, UiBase::ALIGN_CENTER | UiBase::ALIGN_MIDDLE);
         }
@@ -383,6 +387,11 @@ private:
         o->onClose = [this] { closeOverlay(); };
         setOverlay(std::move(o));
     }
+    void openMore() {
+        auto o = std::make_unique<MoreOverlay>();
+        o->onClose = [this] { closeOverlay(); };
+        setOverlay(std::move(o));
+    }
     void openPresets() {
         store_.reload();
         auto o = std::make_unique<PresetsOverlay>(&store_, currentName_);
@@ -394,7 +403,7 @@ private:
         o->onExport = [this] {
             // Export never asks for a path (the X11 save dialog does not exist): it writes into
             // <Documents>/L-STRIP and shows where.
-            float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = get(i);
+            float v[kParamCount]; for (uint32_t i = 0; i < kParamCount; ++i) v[i] = get(i);
             std::string out;
             if (store_.exportTo(currentName_, v, PresetStore::exportDir(), &out)) {
                 const char* home = std::getenv("HOME");
@@ -409,7 +418,7 @@ private:
     void openSave() {
         const bool user = store_.exists(currentName_);
         auto o = std::make_unique<PromptOverlay>("Save preset", user ? currentName_ : store_.nextName(), [this](const std::string& n) {
-            float v[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) v[i] = get(i);
+            float v[kParamCount]; for (uint32_t i = 0; i < kParamCount; ++i) v[i] = get(i);
             std::string err;
             if (store_.save(n, v, &err)) { currentName_ = PresetStore::cleanName(n); rememberPreset(); captureBaseline(); toast("Saved \"" + currentName_ + "\""); closeOverlay(); }
             else toast(err);
@@ -429,13 +438,13 @@ private:
 
     // ---------------------------------------------------------------- presets
     void applyValues(const float* v) {
-        for (uint32_t i = 0; i < kNumInputParams; ++i) { begin(i); set(i, v[i]); end(i); }
+        for (uint32_t i = 0; i < kParamCount; ++i) if (!isOutput(i)) { begin(i); set(i, v[i]); end(i); }
     }
     void loadPreset(const std::string& name, bool factory) {
-        float v[kNumInputParams];
+        float v[kParamCount];
         if (factory) {
             for (uint32_t i = 0; i < kNumFactoryPresets; ++i) if (name == kFactoryPresets[i].name) { presetToValues(kFactoryPresets[i], v); break; }
-        } else if (const UserPreset* p = store_.find(name)) std::copy(p->values, p->values + kNumInputParams, v);
+        } else if (const UserPreset* p = store_.find(name)) std::copy(p->values, p->values + kParamCount, v);
         else { toast("Preset not found"); return; }
         applyValues(v);
         currentName_ = name; { currentName_ = name; rememberPreset(); } captureBaseline();
@@ -443,9 +452,9 @@ private:
     // Match the live parameter values against the known presets (host loads program 0 itself).
     void identifyCurrent() {
         identified_ = true;
-        float cur[kNumInputParams]; for (uint32_t i = 0; i < kNumInputParams; ++i) cur[i] = get(i);
-        auto same = [&](const float* v) { for (uint32_t i = 0; i < kNumInputParams; ++i) if (std::fabs(v[i] - cur[i]) > 1e-3f) return false; return true; };
-        float v[kNumInputParams];
+        float cur[kParamCount]; for (uint32_t i = 0; i < kParamCount; ++i) cur[i] = get(i);
+        auto same = [&](const float* v) { for (uint32_t i = 0; i < kParamCount; ++i) if (!isOutput(i) && std::fabs(v[i] - cur[i]) > 1e-3f) return false; return true; };
+        float v[kParamCount];
         for (uint32_t k = 0; k < kNumFactoryPresets; ++k) { presetToValues(kFactoryPresets[k], v); if (same(v)) { currentName_ = kFactoryPresets[k].name; captureBaseline(); return; } }
         for (const auto& p : store_.user()) if (same(p.values)) { currentName_ = p.name; captureBaseline(); return; }
         if (!presetName.empty()) currentName_ = presetName; else currentName_ = "Untitled";
@@ -454,8 +463,8 @@ private:
     // DPF's state map is also read by the host thread (effGetChunk); the worker thread must not write it.
     // The name is recovered from the parameter values when the editor reopens (identifyCurrent()).
     void rememberPreset() { if (!driver_.selfDriven()) setState("preset", currentName_.c_str()); }
-    void captureBaseline() { for (uint32_t i = 0; i < kNumInputParams; ++i) baseline_[i] = get(i); }
-    bool isModified() const { for (uint32_t i = 0; i < kNumInputParams; ++i) if (std::fabs(baseline_[i] - get(i)) > 1e-4f) return true; return false; }
+    void captureBaseline() { for (uint32_t i = 0; i < kParamCount; ++i) baseline_[i] = get(i); }
+    bool isModified() const { for (uint32_t i = 0; i < kParamCount; ++i) if (!isOutput(i) && std::fabs(baseline_[i] - get(i)) > 1e-4f) return true; return false; }
     std::string currentTag() const {
         for (uint32_t i = 0; i < kNumFactoryPresets; ++i) if (currentName_ == kFactoryPresets[i].name) return kFactoryPresets[i].category;
         return store_.exists(currentName_) ? "User" : "";
@@ -481,7 +490,7 @@ private:
     }
 
     void drawTooltip() {
-        if (!tipsOn || overlay_ || !hover || !hover->tip || !*hover->tip || active) return;
+        if (!tipsOn || (overlay_ && !dynamic_cast<MoreOverlay*>(overlay_.get())) || !hover || !hover->tip || !*hover->tip || active) return;
         if (now() - hoverSince < 0.45) return;
         const std::string s = hover->tip;
         // wrap to ~230 px
@@ -522,7 +531,7 @@ private:
     PillButton* themeBtn_ = nullptr;
     PitchTrace trace_;
     std::string currentName_ = "Podcast Clean";
-    float baseline_[kNumInputParams];
+    float baseline_[kParamCount];
     Browse browse_ = Browse::None;
     float ox_ = 0, oy_ = 0, scale_ = 1;
     double lastClickT_ = 0; float lastClickX_ = 0, lastClickY_ = 0;

@@ -18,7 +18,7 @@ public:
         }
         static const int apLen[3] = {142, 107, 379};
         for (int i = 0; i < 3; ++i) { ap_[i].prepare(static_cast<size_t>(apLen[i] * scale) + 8); apD_[i] = apLen[i] * scale; }
-        pre_.prepare(static_cast<size_t>(0.1 * sr));
+        pre_.prepare(static_cast<size_t>(0.14 * sr));   // type pre-delay (<= 18 ms) + extra (<= 100 ms)
         reset();
         setType(0);
     }
@@ -41,7 +41,13 @@ public:
             gain_[i] = std::pow(10.f, -3.f * len_[i] / (rt60 * static_cast<float>(sr_)));
         }
         damp_ = damp;
-        preSamples_ = pre * static_cast<float>(sr_);
+        basePre_ = pre * static_cast<float>(sr_);
+        preSamples_ = basePre_ + extraPre_;
+    }
+    // Extra pre-delay in milliseconds, added to the type's own.  0 changes nothing.
+    void setExtraPreDelayMs(float ms) {
+        extraPre_ = ms * 0.001f * static_cast<float>(sr_);
+        preSamples_ = basePre_ + extraPre_;
     }
 
     // Mono in -> stereo out (wet only).
@@ -76,7 +82,7 @@ private:
     double sr_ = 48000;
     DelayLine line_[8], ap_[3], pre_;
     double baseLen_[8] = {};
-    float len_[8] = {}, gain_[8] = {}, lp_[8] = {}, apD_[3] = {}, damp_ = 0.3f, preSamples_ = 0;
+    float len_[8] = {}, gain_[8] = {}, lp_[8] = {}, apD_[3] = {}, damp_ = 0.3f, preSamples_ = 0, basePre_ = 0, extraPre_ = 0;
 };
 
 } // namespace lstrip::dsp
